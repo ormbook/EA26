@@ -53,7 +53,7 @@ APEX EA เปิดโอกาสให้คุณปรับแต่งค
 
 จากตาราง Optimization ด้านล่าง นี่คือ "ผลการประชันโฉมของทั้ง 4 โหมดการออกไม้ (Exit Modes)" ที่แสดงให้เห็นถึงประสิทธิภาพของแต่ละโหมดอย่างชัดเจน:
 
-![Optimization Results](file:///C:/Users/ormbo/.gemini/antigravity/brain/e252b4a2-05f2-4159-beaa-df7119ef26c4/.user_uploaded/media_1788558541248.png)
+![Optimization Results](images/optimization_results.png)
 
 ### 🏆 1. โหมด HODL (อมข้ามปี ไม่ยอมขาย)
 *สายสุดโต่ง กำไรทะลุโลก แต่ต้องหัวใจเหล็ก*
