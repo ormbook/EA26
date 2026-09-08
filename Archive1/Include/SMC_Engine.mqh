@@ -41,61 +41,6 @@ private:
 public:
     CSMC_Engine() { m_length = 5; }
     
-    double GetLastSwingHigh(string sym, ENUM_TIMEFRAMES tf, int p = 5) {
-        MqlRates rates[];
-        ArraySetAsSeries(rates, true);
-        if(CopyRates(sym, tf, 0, 100, rates) < 100) return 0;
-        
-        for(int i = p + 1; i < 100 - p; i++) {
-            bool isHigh = true;
-            for(int k=1; k<=p; k++) {
-                if(rates[i].high <= rates[i-k].high || rates[i].high <= rates[i+k].high) { isHigh = false; break; }
-            }
-            if(isHigh) return rates[i].high;
-        }
-        return 0;
-    }
-    
-    double GetLastSwingLow(string sym, ENUM_TIMEFRAMES tf, int p = 5) {
-        MqlRates rates[];
-        ArraySetAsSeries(rates, true);
-        if(CopyRates(sym, tf, 0, 100, rates) < 100) return 0;
-        
-        for(int i = p + 1; i < 100 - p; i++) {
-            bool isLow = true;
-            for(int k=1; k<=p; k++) {
-                if(rates[i].low >= rates[i-k].low || rates[i].low >= rates[i+k].low) { isLow = false; break; }
-            }
-            if(isLow) return rates[i].low;
-        }
-        return 0;
-    }
-    
-    bool CheckBullishSweep(string sym, ENUM_TIMEFRAMES tf, int lookback = 10, int p = 5) {
-        MqlRates rates[];
-        ArraySetAsSeries(rates, true);
-        if(CopyRates(sym, tf, 0, 100, rates) < 100) return false;
-        
-        // Find the last swing low that was formed BEFORE the lookback period
-        double prev_swing_low = 0;
-        for(int i = lookback + p; i < 100 - p; i++) {
-            bool isLow = true;
-            for(int k=1; k<=p; k++) {
-                if(rates[i].low >= rates[i-k].low || rates[i].low >= rates[i+k].low) { isLow = false; break; }
-            }
-            if(isLow) { prev_swing_low = rates[i].low; break; }
-        }
-        if(prev_swing_low == 0) return false;
-        
-        // Check if any candle in the lookback period swept this swing low
-        for(int i = 1; i <= lookback; i++) {
-            if(rates[i].low < prev_swing_low && rates[i].close > prev_swing_low) {
-                return true; // Swept liquidity below the swing low, but rejected!
-            }
-        }
-        return false;
-    }
-    
     // 1. Scan Market Structure (Trend)
     int GetMarketStructure(string sym, ENUM_TIMEFRAMES tf) {
         MqlRates rates[];

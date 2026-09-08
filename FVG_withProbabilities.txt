@@ -1,0 +1,864 @@
+//@version=6
+indicator("FVG with Probabilities | GainzAlgo", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// ui 
+grp_fvg    = "FVG Detection"
+grp_disp   = "Displacement Filter"
+grp_ifvg   = "IFVG Rules"
+grp_ml     = "Quality Score"
+grp_smc    = "Market Structure"
+grp_ob     = "Order Blocks (Internal)"
+grp_sweep  = "Liquidity Sweeps (Internal)"
+grp_liq    = "Liquidity Pools (Equal H/L)"
+grp_daily  = "Daily Levels"
+grp_sess   = "Killzones"
+grp_clean  = "Chart Cleanup"
+grp_sig    = "Signal Engine"
+grp_vol    = "Volume & Volatility"
+grp_time   = "Time-of-Day Filter"
+grp_style  = "Visual Style"
+grp_tbl    = "Dashboard"
+
+// FVG
+i_minAtrMult   = input.float(0.3, "Min FVG Size (ATR x)", minval=0.05, step=0.05, group=grp_fvg)
+i_atrLen       = input.int(14, "ATR Length", group=grp_fvg)
+i_extendBars   = input.int(50, "Box Extension", group=grp_fvg)
+i_fullMitigate = input.bool(false, "Full Rebalance Mitigation", group=grp_fvg)
+i_showCE       = input.bool(true, "Show CE (50%)", group=grp_fvg)
+
+// Displacement
+i_useDisp      = input.bool(true, "Require Displacement", group=grp_disp)
+i_dispBodyAtr  = input.float(0.6, "Min Body (ATR x)", minval=0.1, step=0.05, group=grp_disp)
+i_dispBodyRat  = input.float(0.6, "Min Body/Range", minval=0.3, maxval=0.95, step=0.05, group=grp_disp)
+
+// IFVG
+i_trackIFVG     = input.bool(true, "Track IFVGs", group=grp_ifvg)
+i_ifvgReqDisp   = input.bool(true, "Req Displacement on Inversion", group=grp_ifvg)
+i_ifvgCloseDist = input.float(0.3, "Min Close Dist Past Gap (ATR x)", minval=0.0, step=0.05, group=grp_ifvg)
+i_ifvgReqBOS    = input.bool(true, "Req Aligned BOS", group=grp_ifvg)
+i_ifvgRedraw    = input.bool(true, "Redraw Box to Inversion Body", group=grp_ifvg)
+i_ifvgKzOnly    = input.bool(false, "Inversions Only in Killzones", group=grp_ifvg)
+
+// Score
+i_emaFast  = input.int(20, "Fast EMA", group=grp_ml)
+i_emaSlow  = input.int(50, "Slow EMA", group=grp_ml)
+i_emaHTF   = input.int(200, "HTF EMA", group=grp_ml)
+i_ShowEMA  = input.bool(true, "Show EMAs", group=grp_ml)
+i_highProb = input.float(0.65, "High Cutoff", group=grp_ml, minval=0.5, maxval=0.99, step=0.01)
+i_medProb  = input.float(0.45, "Med Cutoff", group=grp_ml, minval=0.2, maxval=0.64, step=0.01)
+i_maxScore = input.float(0.85, "Max Score Clamp", group=grp_ml, minval=0.70, maxval=0.98, step=0.01)
+
+// Structure
+i_swingLen      = input.int(5, "Fractal Lookback", minval=2, maxval=20, group=grp_smc)
+i_showStructure = input.bool(false, "Show Swing Points", group=grp_smc)
+i_showPDZones   = input.bool(true, "Show P/D Zones", group=grp_smc)
+
+// Order Blocks (internal)
+i_useOB        = input.bool(true, "Enable OB Detection", group=grp_ob)
+i_obLookback   = input.int(10, "OB Lookback (bars)", minval=3, maxval=30, group=grp_ob)
+
+// Liquidity Sweeps (internal)
+i_useSweeps    = input.bool(true, "Enable Sweep Detection", group=grp_sweep)
+i_sweepMinWick = input.float(0.3, "Min Sweep Wick (ATR x)", minval=0.1, step=0.05, group=grp_sweep)
+i_sweepReclaim = input.bool(true, "Require Reclaim (close back)", group=grp_sweep)
+
+// Liquidity Pools (equal H/L)
+i_showLiq      = input.bool(true, "Show Equal H/L Lines", group=grp_liq)
+i_liqTolerance = input.float(0.1, "Equal Tolerance (ATR x)", minval=0.01, step=0.01, group=grp_liq)
+i_liqMaxAge    = input.int(50, "Max Age (bars)", minval=10, group=grp_liq)
+
+// Daily Levels
+i_showOR       = input.bool(true, "Show Opening Range", group=grp_daily)
+i_orSession    = input.session("0930-1000", "Opening Range Session", group=grp_daily)
+i_showPDHL     = input.bool(true, "Show PDH / PDL", group=grp_daily)
+i_showPDOC     = input.bool(false, "Show Prev Day Open/Close", group=grp_daily)
+
+// Killzones
+i_tzOffset = input.string("America/New_York", "Session TZ", options=["America/New_York","Europe/London","Asia/Tokyo","UTC"], group=grp_sess)
+i_kzLondon = input.session("0200-0500", "London KZ", group=grp_sess)
+i_kzNYAM   = input.session("0700-1000", "NY AM KZ", group=grp_sess)
+i_kzNYPM   = input.session("1330-1600", "NY PM KZ", group=grp_sess)
+i_kzShowBG = input.bool(false, "Highlight KZ BG", group=grp_sess)
+
+// Cleanup
+i_ageSoft    = input.int(100, "Dim Older Than (bars)", minval=10, group=grp_clean)
+i_ageHard    = input.int(300, "Delete Older Than (bars)", minval=50, group=grp_clean)
+i_distMax    = input.float(8.0, "Hide Beyond (ATR x)", minval=2.0, step=0.5, group=grp_clean)
+i_enableDist = input.bool(true, "Enable Distance Filter", group=grp_clean)
+
+// Signal Engine
+i_showSignals     = input.bool(true, "Enable Signals", group=grp_sig)
+i_sigMinScore     = input.float(0.60, "Min FVG Score for Signal", group=grp_sig, minval=0.40, maxval=0.95, step=0.01)
+i_sigMode         = input.string("Both", "Signal Mode", options=["Trend Only","Reversal Only","Both"], group=grp_sig, tooltip="Trend = with dominant bias. Reversal = counter-trend with sweep.")
+i_sigReqConfirm   = input.bool(true,  "Require Confirmation Candle", group=grp_sig, tooltip="Next candle must show opposing displacement.")
+i_sigReqPD        = input.bool(true,  "Req P/D Alignment (Trend)", group=grp_sig)
+i_sigReqKZ        = input.bool(true,  "Req Killzone Active", group=grp_sig)
+i_sigHTFBuffer    = input.float(0.3,  "HTF Buffer (ATR x)", minval=0.0, step=0.05, group=grp_sig, tooltip="Price must be this far past HTF EMA to count.")
+i_sigCooldown     = input.int(10, "Min Bars Between Signals", minval=0, group=grp_sig)
+i_sigAplusOnly    = input.bool(false, "Show Only A+ Signals", group=grp_sig)
+i_sigOnCETap      = input.bool(true,  "Trigger on CE Tap", group=grp_sig)
+i_sigOnOBRetest   = input.bool(true,  "Trigger on OB Retest", group=grp_sig)
+i_sigOnSweep      = input.bool(true,  "Trigger on Liquidity Sweep", group=grp_sig)
+
+// Volume & Volatility
+i_rvolLen        = input.int(20, "RVOL Length", minval=5, group=grp_vol)
+i_rvolMin        = input.float(1.0, "Min RVOL for Signal", minval=0.3, step=0.1, group=grp_vol, tooltip="Relative volume gate. Below this, signals are downgraded.")
+i_volRegimeLen   = input.int(50, "Volatility Regime ATR Length", group=grp_vol)
+i_volCompressPct = input.float(0.7, "Compression Threshold", minval=0.4, maxval=0.95, step=0.05, group=grp_vol, tooltip="If current ATR / long ATR < this, market is compressed = chop risk.")
+i_volExpandPct   = input.float(1.3, "Expansion Threshold", minval=1.05, maxval=2.0, step=0.05, group=grp_vol)
+
+// Time-of-Day
+i_useTimeFilter  = input.bool(true, "Enable Time Filter", group=grp_time)
+i_avoidOpenMin   = input.int(5, "Skip First N Minutes of NY AM", minval=0, maxval=30, group=grp_time, tooltip="Skip open drive (noise).")
+i_avoidCloseMin  = input.int(10, "Skip Last N Minutes of NY PM", minval=0, maxval=30, group=grp_time)
+i_avoidLunch     = input.bool(true, "Skip Lunch (11:30-13:30 NY)", group=grp_time)
+
+// Style
+color i_bullHigh = input.color(#00e676, "Bull High", group=grp_style)
+color i_bullMed  = input.color(#26a69a, "Bull Med",  group=grp_style)
+color i_bullLow  = input.color(#37474f, "Bull Low",  group=grp_style)
+color i_bearHigh = input.color(#ff1744, "Bear High", group=grp_style)
+color i_bearMed  = input.color(#ff6d00, "Bear Med",  group=grp_style)
+color i_bearLow  = input.color(#4e342e, "Bear Low",  group=grp_style)
+color i_ifvgBull = input.color(#7e57c2, "IFVG was Bull", group=grp_style)
+color i_ifvgBear = input.color(#f48fb1, "IFVG was Bear", group=grp_style)
+color i_orColor  = input.color(#ffd700, "Opening Range", group=grp_style)
+color i_pdhColor = input.color(#ff1744, "PDH",  group=grp_style)
+color i_pdlColor = input.color(#00e676, "PDL",  group=grp_style)
+color i_liqColor = input.color(#bb86fc, "Liquidity", group=grp_style)
+i_fillAlpha   = input.int(88, "Fill Alpha", minval=60, maxval=98, group=grp_style)
+i_borderAlpha = input.int(45, "Border Alpha", minval=0, maxval=90, group=grp_style)
+i_dimExtra    = input.int(6, "Extra Dim on Old", minval=0, maxval=10, group=grp_style)
+
+// Dashboard
+i_showTable = input.bool(true, "Show Dashboard", group=grp_tbl)
+i_tblPos    = input.string("Top Right", "Position", options=["Top Right","Top Left","Bottom Right","Bottom Left"], group=grp_tbl)
+
+
+atr      = ta.atr(i_atrLen)
+atrLong  = ta.atr(i_volRegimeLen)
+emaFast  = ta.ema(close, i_emaFast)
+emaSlow  = ta.ema(close, i_emaSlow)
+emaHTF   = ta.ema(close, i_emaHTF)
+volMA    = ta.sma(volume, i_rvolLen)
+rvol     = volume / math.max(volMA, 1)
+
+bullTrend = emaFast > emaSlow
+bearTrend = emaFast < emaSlow
+
+// HTF buffer - price must be clearly above/below HTF to count
+htfBuf    = i_sigHTFBuffer * atr
+aboveHTF  = close > emaHTF + htfBuf
+belowHTF  = close < emaHTF - htfBuf
+
+// Volatility regime
+volRatio   = atr / math.max(atrLong, syminfo.mintick)
+volCompressed = volRatio < i_volCompressPct
+volExpanded   = volRatio > i_volExpandPct
+volNormal     = not volCompressed and not volExpanded
+
+// Killzones
+inLondon = not na(time(timeframe.period, i_kzLondon, i_tzOffset))
+inNYAM   = not na(time(timeframe.period, i_kzNYAM,   i_tzOffset))
+inNYPM   = not na(time(timeframe.period, i_kzNYPM,   i_tzOffset))
+inKZ     = inLondon or inNYAM or inNYPM
+
+bgcolor(i_kzShowBG and inLondon ? color.new(#448aff, 94) : na)
+bgcolor(i_kzShowBG and inNYAM   ? color.new(#00e676, 94) : na)
+bgcolor(i_kzShowBG and inNYPM   ? color.new(#ffd700, 94) : na)
+
+// Time-of-day filter
+nyHour   = hour(time, i_tzOffset)
+nyMinute = minute(time, i_tzOffset)
+nyMinsFromMid = nyHour * 60 + nyMinute
+
+// NY AM open = 9:30 = 570 mins; skip first N mins = until 570 + N
+openBlackout  = nyMinsFromMid >= 570 and nyMinsFromMid < (570 + i_avoidOpenMin)
+// NY close = 16:00 = 960; skip last N mins
+closeBlackout = nyMinsFromMid >= (960 - i_avoidCloseMin) and nyMinsFromMid < 960
+// Lunch = 11:30 to 13:30 = 690 to 810
+lunchBlackout = i_avoidLunch and nyMinsFromMid >= 690 and nyMinsFromMid < 810
+
+inBlackout = i_useTimeFilter and (openBlackout or closeBlackout or lunchBlackout)
+
+isDisp(ofs, wantBull) =>
+    bodyAbs = math.abs(close[ofs] - open[ofs])
+    rng     = math.max(high[ofs] - low[ofs], syminfo.mintick)
+    atrRef  = math.max(atr, syminfo.mintick)
+    big     = bodyAbs / atrRef >= i_dispBodyAtr
+    solid   = bodyAbs / rng    >= i_dispBodyRat
+    dir     = wantBull ? close[ofs] > open[ofs] : close[ofs] < open[ofs]
+    big and solid and dir
+
+c2_bullDisp = isDisp(1, true)
+c2_bearDisp = isDisp(1, false)
+curBullDisp = isDisp(0, true)
+curBearDisp = isDisp(0, false)
+
+// Velocity: consecutive displacement candles
+bullVelocity = (isDisp(0, true)  ? 1 : 0) + (isDisp(1, true)  ? 1 : 0) + (isDisp(2, true)  ? 1 : 0)
+bearVelocity = (isDisp(0, false) ? 1 : 0) + (isDisp(1, false) ? 1 : 0) + (isDisp(2, false) ? 1 : 0)
+
+volRelDisp = volume[1] / math.max(volMA[1], 1)
+
+
+swingH = ta.pivothigh(high, i_swingLen, i_swingLen)
+swingL = ta.pivotlow(low,   i_swingLen, i_swingLen)
+
+var float lastSH = na
+var float lastSL = na
+var float prevSH = na
+var float prevSL = na
+var int   lastSHBar = na
+var int   lastSLBar = na
+
+if not na(swingH)
+    prevSH := lastSH
+    lastSH := swingH
+    lastSHBar := bar_index - i_swingLen
+    if i_showStructure
+        label.new(bar_index - i_swingLen, swingH, "H", style=label.style_none, textcolor=color.new(#ff1744, 30), size=size.tiny, yloc=yloc.abovebar)
+if not na(swingL)
+    prevSL := lastSL
+    lastSL := swingL
+    lastSLBar := bar_index - i_swingLen
+    if i_showStructure
+        label.new(bar_index - i_swingLen, swingL, "L", style=label.style_none, textcolor=color.new(#00e676, 30), size=size.tiny, yloc=yloc.belowbar)
+
+bosBull = not na(lastSH) and not na(prevSH) and lastSH > prevSH
+bosBear = not na(lastSL) and not na(prevSL) and lastSL < prevSL
+
+haveRange = not na(lastSH) and not na(lastSL)
+rangeHi   = haveRange ? math.max(lastSH, lastSL) : na
+rangeLo   = haveRange ? math.min(lastSH, lastSL) : na
+rangeMid  = haveRange ? (rangeHi + rangeLo) / 2 : na
+
+inDiscount = haveRange and close < rangeMid
+inPremium  = haveRange and close > rangeMid
+
+// P/D zones visual
+var line pdLine  = na
+var box  premBox = na
+var box  discBox = na
+if i_showPDZones and haveRange and barstate.islast
+    line.delete(pdLine)
+    box.delete(premBox)
+    box.delete(discBox)
+    pdLine  := line.new(bar_index - 50, rangeMid, bar_index + 20, rangeMid, color=color.new(#ffd700, 40), style=line.style_dashed)
+    premBox := box.new(bar_index - 50, rangeHi, bar_index + 20, rangeMid, bgcolor=color.new(#ff1744, 96), border_color=color.new(#ff1744, 85))
+    discBox := box.new(bar_index - 50, rangeMid, bar_index + 20, rangeLo, bgcolor=color.new(#00e676, 96), border_color=color.new(#00e676, 85))
+
+
+sweepBull = false
+sweepBear = false
+if i_useSweeps and not na(lastSL) and not na(lastSH)
+    wickDown = low < lastSL and (lastSL - low) >= i_sweepMinWick * atr
+    wickUp   = high > lastSH and (high - lastSH) >= i_sweepMinWick * atr
+    reclaimUp   = not i_sweepReclaim or close > lastSL
+    reclaimDown = not i_sweepReclaim or close < lastSH
+    sweepBull := wickDown and reclaimUp
+    sweepBear := wickUp   and reclaimDown
+
+
+var array<float> ob_tops   = array.new<float>()
+var array<float> ob_bots   = array.new<float>()
+var array<bool>  ob_isBull = array.new<bool>()
+var array<int>   ob_bar    = array.new<int>()
+
+if i_useOB
+
+    if curBullDisp
+        for k = 1 to i_obLookback
+            if close[k] < open[k]
+                obTop = high[k]
+                obBot = low[k]
+                // Avoid dupes
+                dup = false
+                if array.size(ob_tops) > 0
+                    for m = 0 to array.size(ob_tops) - 1
+                        if math.abs(array.get(ob_tops, m) - obTop) < syminfo.mintick and math.abs(array.get(ob_bots, m) - obBot) < syminfo.mintick
+                            dup := true
+                            break
+                if not dup
+                    array.push(ob_tops, obTop)
+                    array.push(ob_bots, obBot)
+                    array.push(ob_isBull, true)
+                    array.push(ob_bar, bar_index - k)
+                break
+    if curBearDisp
+        for k = 1 to i_obLookback
+            if close[k] > open[k]
+                obTop = high[k]
+                obBot = low[k]
+                dup = false
+                if array.size(ob_tops) > 0
+                    for m = 0 to array.size(ob_tops) - 1
+                        if math.abs(array.get(ob_tops, m) - obTop) < syminfo.mintick and math.abs(array.get(ob_bots, m) - obBot) < syminfo.mintick
+                            dup := true
+                            break
+                if not dup
+                    array.push(ob_tops, obTop)
+                    array.push(ob_bots, obBot)
+                    array.push(ob_isBull, false)
+                    array.push(ob_bar, bar_index - k)
+                break
+
+// Prune old OBs (keep last 20)
+if array.size(ob_tops) > 20
+    array.shift(ob_tops)
+    array.shift(ob_bots)
+    array.shift(ob_isBull)
+    array.shift(ob_bar)
+
+// OB retest detection 
+obRetestBull = false
+obRetestBear = false
+if array.size(ob_tops) > 0
+    for m = 0 to array.size(ob_tops) - 1
+        t = array.get(ob_tops, m)
+        b = array.get(ob_bots, m)
+        isBullOB = array.get(ob_isBull, m)
+        bornAt = array.get(ob_bar, m)
+        // Only retests if OB is still fresh (not broken)
+        if bar_index - bornAt < 100
+            if isBullOB and low <= t and low >= b and close > b
+                obRetestBull := true
+            if not isBullOB and high >= b and high <= t and close < t
+                obRetestBear := true
+
+
+var array<line> liq_lines = array.new<line>()
+var array<int>  liq_bars  = array.new<int>()
+
+if i_showLiq and not na(swingH) and not na(prevSH)
+    if math.abs(lastSH - prevSH) <= i_liqTolerance * atr
+        // Equal highs = buy-side liquidity
+        ln = line.new(lastSHBar, lastSH, bar_index + 10, lastSH, color=color.new(i_liqColor, 40), style=line.style_dotted, width=1, extend=extend.right)
+        array.push(liq_lines, ln)
+        array.push(liq_bars, bar_index)
+
+if i_showLiq and not na(swingL) and not na(prevSL)
+    if math.abs(lastSL - prevSL) <= i_liqTolerance * atr
+        ln = line.new(lastSLBar, lastSL, bar_index + 10, lastSL, color=color.new(i_liqColor, 40), style=line.style_dotted, width=1, extend=extend.right)
+        array.push(liq_lines, ln)
+        array.push(liq_bars, bar_index)
+
+// Clean old liquidity lines
+if array.size(liq_lines) > 0
+    var array<int> liqToDel = array.new<int>()
+    array.clear(liqToDel)
+    for m = 0 to array.size(liq_lines) - 1
+        if bar_index - array.get(liq_bars, m) > i_liqMaxAge
+            array.push(liqToDel, m)
+    if array.size(liqToDel) > 0
+        for j = array.size(liqToDel) - 1 to 0
+            idx = array.get(liqToDel, j)
+            if idx < array.size(liq_lines)
+                line.delete(array.get(liq_lines, idx))
+                array.remove(liq_lines, idx)
+                array.remove(liq_bars, idx)
+
+
+var float orHigh = na
+var float orLow  = na
+var line  orHighLn = na
+var line  orLowLn  = na
+
+inORSession = not na(time(timeframe.period, i_orSession, i_tzOffset))
+if inORSession and not inORSession[1]
+    orHigh := high
+    orLow  := low
+if inORSession
+    orHigh := math.max(orHigh, high)
+    orLow  := math.min(orLow, low)
+
+if i_showOR and not na(orHigh) and barstate.islast
+    line.delete(orHighLn)
+    line.delete(orLowLn)
+    orHighLn := line.new(bar_index - 100, orHigh, bar_index + 20, orHigh, color=color.new(i_orColor, 30), style=line.style_solid, width=1, extend=extend.right)
+    orLowLn  := line.new(bar_index - 100, orLow,  bar_index + 20, orLow,  color=color.new(i_orColor, 30), style=line.style_solid, width=1, extend=extend.right)
+
+// PDH / PDL / PDO / PDC
+pdh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
+pdl = request.security(syminfo.tickerid, "D", low[1],  lookahead=barmerge.lookahead_on)
+pdo = request.security(syminfo.tickerid, "D", open[1], lookahead=barmerge.lookahead_on)
+pdc = request.security(syminfo.tickerid, "D", close[1],lookahead=barmerge.lookahead_on)
+
+var line pdhLn = na
+var line pdlLn = na
+var line pdoLn = na
+var line pdcLn = na
+
+if i_showPDHL and barstate.islast
+    line.delete(pdhLn)
+    line.delete(pdlLn)
+    pdhLn := line.new(bar_index - 100, pdh, bar_index + 20, pdh, color=color.new(i_pdhColor, 30), style=line.style_dashed, width=1, extend=extend.right)
+    pdlLn := line.new(bar_index - 100, pdl, bar_index + 20, pdl, color=color.new(i_pdlColor, 30), style=line.style_dashed, width=1, extend=extend.right)
+
+if i_showPDOC and barstate.islast
+    line.delete(pdoLn)
+    line.delete(pdcLn)
+    pdoLn := line.new(bar_index - 100, pdo, bar_index + 20, pdo, color=color.new(color.gray, 50), style=line.style_dotted, width=1, extend=extend.right)
+    pdcLn := line.new(bar_index - 100, pdc, bar_index + 20, pdc, color=color.new(color.white, 50), style=line.style_dotted, width=1, extend=extend.right)
+
+
+clamp(v, lo, hi) => math.max(lo, math.min(hi, v))
+logit(p) => math.log(p / (1.0 - p))
+
+calcScore(fvgSize, fvgMid, isBull) =>
+    sizeRatio = fvgSize / math.max(atr, syminfo.mintick)
+    f1 = sizeRatio > 1.5 ? 0.82 : sizeRatio > 0.9 ? 0.65 : sizeRatio > 0.4 ? 0.50 : 0.35
+    f2 = isBull ? (bullTrend ? 0.78 : 0.30) : (bearTrend ? 0.78 : 0.30)
+    f3 = isBull ? (aboveHTF ? 0.76 : 0.34) : (belowHTF ? 0.76 : 0.34)
+    f4 = volRelDisp > 1.5 ? 0.72 : volRelDisp > 0.8 ? 0.55 : 0.38
+    f5 = not haveRange ? 0.50 : (isBull ? (fvgMid < rangeMid ? 0.80 : 0.30) : (fvgMid > rangeMid ? 0.80 : 0.30))
+    f6 = isBull ? (bosBull ? 0.75 : 0.40) : (bosBear ? 0.75 : 0.40)
+    f7 = inKZ ? 0.68 : 0.45
+    f8 = volNormal ? 0.60 : volExpanded ? 0.75 : 0.35
+    ll = 1.2*logit(clamp(f1,0.1,0.9)) + 1.0*logit(clamp(f2,0.1,0.9)) + 1.0*logit(clamp(f3,0.1,0.9)) + 0.8*logit(clamp(f4,0.1,0.9)) + 1.5*logit(clamp(f5,0.1,0.9)) + 1.3*logit(clamp(f6,0.1,0.9)) + 0.7*logit(clamp(f7,0.1,0.9)) + 0.9*logit(clamp(f8,0.1,0.9))
+    clamp(1.0 / (1.0 + math.exp(-(-0.60 + ll))), 0.04, i_maxScore)
+
+probColor(p, isBull) =>
+    tier = p >= i_highProb ? 2 : p >= i_medProb ? 1 : 0
+    isBull ? (tier == 2 ? i_bullHigh : tier == 1 ? i_bullMed : i_bullLow) : (tier == 2 ? i_bearHigh : tier == 1 ? i_bearMed : i_bearLow)
+
+tierLabel(p) => p >= i_highProb ? "H" : p >= i_medProb ? "M" : "L"
+
+
+var array<box>   fvg_boxes    = array.new<box>()
+var array<line>  fvg_ceLns    = array.new<line>()
+var array<float> fvg_tops     = array.new<float>()
+var array<float> fvg_bots     = array.new<float>()
+var array<bool>  fvg_isBull   = array.new<bool>()
+var array<float> fvg_probs    = array.new<float>()
+var array<int>   fvg_state    = array.new<int>()
+var array<int>   fvg_birthBar = array.new<int>()
+
+overlaps(newTop, newBot) =>
+    bool hit = false
+    sz = array.size(fvg_boxes)
+    if sz > 0
+        for i = 0 to sz - 1
+            exTop = array.get(fvg_tops, i)
+            exBot = array.get(fvg_bots, i)
+            if (newTop <= exTop and newTop >= exBot) or (newBot <= exTop and newBot >= exBot) or (newBot <= exBot and newTop >= exTop) or (exBot <= newBot and exTop >= newTop)
+                hit := true
+                break
+    hit
+
+// Detection
+bullGap = low - high[2]
+bearGap = low[2] - high
+bullFVG = low > high[2] and bullGap >= i_minAtrMult * atr and (not i_useDisp or c2_bullDisp)
+bearFVG = high < low[2] and bearGap >= i_minAtrMult * atr and (not i_useDisp or c2_bearDisp)
+
+if bullFVG and not overlaps(low, high[2])
+    mid = (low + high[2]) / 2
+    p   = calcScore(bullGap, mid, true)
+    c   = probColor(p, true)
+    lbl = tierLabel(p) + " " + str.format("{0,number,#}%", p * 100)
+    bx  = box.new(bar_index[2], low, bar_index + i_extendBars, high[2], bgcolor=color.new(c, i_fillAlpha), border_color=color.new(c, i_borderAlpha), border_width=1, extend=extend.right, text=lbl, text_color=color.new(c, 10), text_size=size.normal, text_halign=text.align_right, text_valign=text.align_top)
+    ceLn = i_showCE ? line.new(bar_index[2], mid, bar_index + i_extendBars, mid, color=color.new(c, 30), style=line.style_dotted, extend=extend.right) : na
+    array.push(fvg_boxes, bx)
+    array.push(fvg_ceLns, ceLn)
+    array.push(fvg_tops, low)
+    array.push(fvg_bots, high[2])
+    array.push(fvg_isBull, true)
+    array.push(fvg_probs, p)
+    array.push(fvg_state, 0)
+    array.push(fvg_birthBar, bar_index)
+
+if bearFVG and not overlaps(low[2], high)
+    mid = (low[2] + high) / 2
+    p   = calcScore(bearGap, mid, false)
+    c   = probColor(p, false)
+    lbl = tierLabel(p) + " " + str.format("{0,number,#}%", p * 100)
+    bx  = box.new(bar_index[2], low[2], bar_index + i_extendBars, high, bgcolor=color.new(c, i_fillAlpha), border_color=color.new(c, i_borderAlpha), border_width=1, extend=extend.right, text=lbl, text_color=color.new(c, 10), text_size=size.normal, text_halign=text.align_right, text_valign=text.align_top)
+    ceLn = i_showCE ? line.new(bar_index[2], mid, bar_index + i_extendBars, mid, color=color.new(c, 30), style=line.style_dotted, extend=extend.right) : na
+    array.push(fvg_boxes, bx)
+    array.push(fvg_ceLns, ceLn)
+    array.push(fvg_tops, low[2])
+    array.push(fvg_bots, high)
+    array.push(fvg_isBull, false)
+    array.push(fvg_probs, p)
+    array.push(fvg_state, 0)
+    array.push(fvg_birthBar, bar_index)
+
+
+atrDist = i_ifvgCloseDist * atr
+var array<int> toDelete = array.new<int>()
+array.clear(toDelete)
+
+// Track whether CE was tapped this bar 
+bool ceTapBullFVG = false
+bool ceTapBearFVG = false
+float ceTapBullScore = 0.0
+float ceTapBearScore = 0.0
+
+sz = array.size(fvg_boxes)
+if sz > 0
+    for i = 0 to sz - 1
+        t     = array.get(fvg_tops,     i)
+        b     = array.get(fvg_bots,     i)
+        bull  = array.get(fvg_isBull,   i)
+        st    = array.get(fvg_state,    i)
+        pSc   = array.get(fvg_probs,    i)
+        birth = array.get(fvg_birthBar, i)
+        mid   = (t + b) / 2
+        bx    = array.get(fvg_boxes,    i)
+        age   = bar_index - birth
+
+        if st == 0
+            ceTap = bull ? low <= mid : high >= mid
+            if ceTap
+                array.set(fvg_state, i, 1)
+                box.set_border_width(bx, 2)
+                if bull and pSc > ceTapBullScore
+                    ceTapBullFVG := true
+                    ceTapBullScore := pSc
+                if not bull and pSc > ceTapBearScore
+                    ceTapBearFVG := true
+                    ceTapBearScore := pSc
+
+        if age > i_ageHard
+            array.push(toDelete, i)
+        else if age > i_ageSoft
+            curBull = array.get(fvg_isBull, i)
+            newC = st == 3 ? (curBull ? i_ifvgBull : i_ifvgBear) : probColor(pSc, curBull)
+            box.set_bgcolor(bx, color.new(newC, math.min(95, i_fillAlpha + i_dimExtra)))
+            box.set_border_color(bx, color.new(newC, math.min(95, i_borderAlpha + i_dimExtra + 10)))
+
+        if st != 3
+            fullFill = bull ? low <= b : high >= t
+            if fullFill
+                closeBeyond = bull ? close < b : close > t
+                closeDistOk = bull ? (b - close) >= atrDist : (close - t) >= atrDist
+                dispOk      = not i_ifvgReqDisp or (bull ? curBearDisp : curBullDisp)
+                bosOk       = not i_ifvgReqBOS  or (bull ? bosBear     : bosBull)
+                kzOk        = not i_ifvgKzOnly  or inKZ
+                validInv    = i_trackIFVG and closeBeyond and closeDistOk and dispOk and bosOk and kzOk
+
+                if validInv
+                    newC = bull ? i_ifvgBull : i_ifvgBear
+                    newTop = t
+                    newBot = b
+                    if i_ifvgRedraw
+                        newTop := math.max(open, close)
+                        newBot := math.min(open, close)
+                        array.set(fvg_tops, i, newTop)
+                        array.set(fvg_bots, i, newBot)
+                        box.set_top(bx, newTop)
+                        box.set_bottom(bx, newBot)
+                        newMid = (newTop + newBot) / 2
+                        ceLn = array.get(fvg_ceLns, i)
+                        if not na(ceLn)
+                            line.set_y1(ceLn, newMid)
+                            line.set_y2(ceLn, newMid)
+                            line.set_color(ceLn, color.new(newC, 30))
+                    box.set_bgcolor(bx, color.new(newC, i_fillAlpha - 5))
+                    box.set_border_color(bx, color.new(newC, i_borderAlpha))
+                    box.set_text(bx, "IFVG " + str.format("{0,number,#}%", pSc * 100))
+                    array.set(fvg_isBull, i, not bull)
+                    array.set(fvg_state,  i, 3)
+                else
+                    shouldDel = i_fullMitigate ? fullFill : (bull ? low <= t : high >= b)
+                    if shouldDel
+                        array.push(toDelete, i)
+
+        if st == 3
+            tNow    = array.get(fvg_tops,   i)
+            bNow    = array.get(fvg_bots,   i)
+            nowBull = array.get(fvg_isBull, i)
+            broken  = nowBull ? close < bNow : close > tNow
+            if broken
+                array.push(toDelete, i)
+
+// Distance hiding
+if i_enableDist and barstate.islast
+    sz3 = array.size(fvg_boxes)
+    if sz3 > 0
+        for i = 0 to sz3 - 1
+            t2 = array.get(fvg_tops, i)
+            b2 = array.get(fvg_bots, i)
+            m2 = (t2 + b2) / 2
+            dist = math.abs(close - m2) / math.max(atr, syminfo.mintick)
+            bx2 = array.get(fvg_boxes, i)
+            if dist > i_distMax
+                box.set_bgcolor(bx2, color.new(color.gray, 99))
+                box.set_border_color(bx2, color.new(color.gray, 99))
+                box.set_text(bx2, "")
+                ceLn2 = array.get(fvg_ceLns, i)
+                if not na(ceLn2)
+                    line.set_color(ceLn2, color.new(color.gray, 99))
+
+// Deletions
+delSz = array.size(toDelete)
+if delSz > 0
+    var array<int> seen = array.new<int>()
+    array.clear(seen)
+    for j = delSz - 1 to 0
+        idx = array.get(toDelete, j)
+        if not array.includes(seen, idx) and idx < array.size(fvg_boxes)
+            array.push(seen, idx)
+            box.delete(array.get(fvg_boxes, idx))
+            ceLn3 = array.get(fvg_ceLns, idx)
+            if not na(ceLn3)
+                line.delete(ceLn3)
+            array.remove(fvg_boxes,    idx)
+            array.remove(fvg_ceLns,    idx)
+            array.remove(fvg_tops,     idx)
+            array.remove(fvg_bots,     idx)
+            array.remove(fvg_isBull,   idx)
+            array.remove(fvg_probs,    idx)
+            array.remove(fvg_state,    idx)
+            array.remove(fvg_birthBar, idx)
+
+
+var int lastLongSigBar  = -9999
+var int lastShortSigBar = -9999
+
+barsSinceLong  = bar_index - lastLongSigBar
+barsSinceShort = bar_index - lastShortSigBar
+cooldownLong   = barsSinceLong  >= i_sigCooldown
+cooldownShort  = barsSinceShort >= i_sigCooldown
+
+
+
+// Capture trigger events from prior bar
+trig_longCE     = ceTapBullFVG[1]
+trig_shortCE    = ceTapBearFVG[1]
+trig_longOB     = obRetestBull[1]
+trig_shortOB    = obRetestBear[1]
+trig_longSweep  = sweepBull[1]
+trig_shortSweep = sweepBear[1]
+
+trigScoreLong  = ceTapBullScore[1]
+trigScoreShort = ceTapBearScore[1]
+
+// Any long / short trigger?
+anyLongTrig  = (i_sigOnCETap and trig_longCE)     or (i_sigOnOBRetest and trig_longOB)   or (i_sigOnSweep and trig_longSweep)
+anyShortTrig = (i_sigOnCETap and trig_shortCE)    or (i_sigOnOBRetest and trig_shortOB)  or (i_sigOnSweep and trig_shortSweep)
+
+// Context checks (current bar)
+rvolOk  = rvol >= i_rvolMin
+scoreOkLong  = not i_sigOnCETap or (trig_longCE  ? trigScoreLong  >= i_sigMinScore : true)
+scoreOkShort = not i_sigOnCETap or (trig_shortCE ? trigScoreShort >= i_sigMinScore : true)
+kzOk    = not i_sigReqKZ or inKZ
+confirmLong  = not i_sigReqConfirm or curBullDisp
+confirmShort = not i_sigReqConfirm or curBearDisp
+notBlackout  = not inBlackout
+notCompressed = not volCompressed
+
+// Trend alignment
+trendOkLong  = bullTrend and bosBull and aboveHTF
+trendOkShort = bearTrend and bosBear and belowHTF
+
+// P/D alignment
+pdOkLong  = not i_sigReqPD or inDiscount
+pdOkShort = not i_sigReqPD or inPremium
+
+// Shared base context (non-directional)
+baseCtx = rvolOk and kzOk and notBlackout and notCompressed
+
+// TREND signals
+canFireTrendLong  = baseCtx and anyLongTrig  and confirmLong  and scoreOkLong  and trendOkLong  and pdOkLong  and cooldownLong
+canFireTrendShort = baseCtx and anyShortTrig and confirmShort and scoreOkShort and trendOkShort and pdOkShort and cooldownShort
+
+// REVERSAL signals require sweep (strictest) + confirmation + counter-trend bias
+canFireRevLong  = baseCtx and trig_longSweep  and confirmLong  and bearTrend and cooldownLong
+canFireRevShort = baseCtx and trig_shortSweep and confirmShort and bullTrend and cooldownShort
+
+// Mode gates
+modeTrend = i_sigMode == "Trend Only" or i_sigMode == "Both"
+modeRev   = i_sigMode == "Reversal Only" or i_sigMode == "Both"
+
+fireTrendLong  = i_showSignals and modeTrend and canFireTrendLong
+fireTrendShort = i_showSignals and modeTrend and canFireTrendShort
+fireRevLong    = i_showSignals and modeRev   and canFireRevLong
+fireRevShort   = i_showSignals and modeRev   and canFireRevShort
+
+
+tierOf(isLong, isTrend) =>
+    triggerCount = 0
+    if isLong
+        triggerCount += (trig_longCE     ? 1 : 0)
+        triggerCount += (trig_longOB     ? 1 : 0)
+        triggerCount += (trig_longSweep  ? 1 : 0)
+    else
+        triggerCount += (trig_shortCE    ? 1 : 0)
+        triggerCount += (trig_shortOB    ? 1 : 0)
+        triggerCount += (trig_shortSweep ? 1 : 0)
+    velOk = isLong ? bullVelocity >= 2 : bearVelocity >= 2
+    highScore = isLong ? trigScoreLong >= i_highProb : trigScoreShort >= i_highProb
+    if isTrend and triggerCount >= 2 and volExpanded and velOk
+        "A+"
+    else if isTrend and (triggerCount >= 2 or (highScore and velOk))
+        "A"
+    else
+        "B"
+
+// Determine label content
+longTier  = fireTrendLong  ? tierOf(true,  true)  : fireRevLong  ? "REV-" + tierOf(true,  false) : ""
+shortTier = fireTrendShort ? tierOf(false, true)  : fireRevShort ? "REV-" + tierOf(false, false) : ""
+
+// Apply A+ only filter
+passAplusLong  = not i_sigAplusOnly or longTier  == "A+"
+passAplusShort = not i_sigAplusOnly or shortTier == "A+"
+
+// Fire labels
+if (fireTrendLong or fireRevLong) and passAplusLong
+    lblType = fireRevLong ? "REV LONG" : "LONG"
+    sc      = trigScoreLong
+    txt     = lblType + " " + longTier + (sc > 0 ? " " + str.format("{0,number,#}%", sc * 100) : "")
+    labelColor = fireRevLong ? color.new(#7e57c2, 10) : color.new(#00e676, 20)
+    label.new(bar_index, low, txt, style=label.style_label_up, color=labelColor, textcolor=color.white, size=size.normal, yloc=yloc.belowbar)
+    lastLongSigBar := bar_index
+
+if (fireTrendShort or fireRevShort) and passAplusShort
+    lblType = fireRevShort ? "REV SHORT" : "SHORT"
+    sc      = trigScoreShort
+    txt     = lblType + " " + shortTier + (sc > 0 ? " " + str.format("{0,number,#}%", sc * 100) : "")
+    labelColor = fireRevShort ? color.new(#f48fb1, 10) : color.new(#ff1744, 20)
+    label.new(bar_index, high, txt, style=label.style_label_down, color=labelColor, textcolor=color.white, size=size.normal, yloc=yloc.abovebar)
+    lastShortSigBar := bar_index
+
+
+int openBull  = 0
+int openBear  = 0
+int openIFVG  = 0
+int openCETap = 0
+sz2 = array.size(fvg_boxes)
+if sz2 > 0
+    for i = 0 to sz2 - 1
+        st = array.get(fvg_state, i)
+        if st == 3
+            openIFVG += 1
+        else
+            if array.get(fvg_isBull, i)
+                openBull += 1
+            else
+                openBear += 1
+            if st == 1
+                openCETap += 1
+
+avgProb(wantBull) =>
+    float s = 0.0
+    float w = 0.0
+    n = array.size(fvg_probs)
+    if n > 0
+        for i = 0 to n - 1
+            if array.get(fvg_isBull, i) == wantBull and array.get(fvg_state, i) != 3
+                m    = (array.get(fvg_tops, i) + array.get(fvg_bots, i)) / 2
+                dist = math.abs(close - m) / math.max(atr, syminfo.mintick)
+                wt   = 1.0 / (1.0 + dist)
+                s += array.get(fvg_probs, i) * wt
+                w += wt
+    w > 0 ? s / w : na
+
+// Overall context
+bool longTrendCtx  = baseCtx and trendOkLong  and pdOkLong
+bool shortTrendCtx = baseCtx and trendOkShort and pdOkShort
+bool longRevCtx    = baseCtx and bearTrend and (sweepBull  or array.size(ob_tops) > 0)
+bool shortRevCtx   = baseCtx and bullTrend and (sweepBear  or array.size(ob_tops) > 0)
+
+ctxTxt = longTrendCtx ? "LONG-TREND" : shortTrendCtx ? "SHORT-TREND" : longRevCtx ? "LONG-REV?" : shortRevCtx ? "SHORT-REV?" : inBlackout ? "BLACKOUT" : volCompressed ? "COMPRESSED" : "WAIT"
+ctxClr = longTrendCtx ? color.new(#00e676, 0) : shortTrendCtx ? color.new(#ff1744, 0) : longRevCtx ? color.new(#7e57c2, 0) : shortRevCtx ? color.new(#f48fb1, 0) : color.new(#8b949e, 0)
+
+pdStatus  = not haveRange ? "-" : close > rangeMid ? "PREM" : "DISC"
+bosStatus = bosBull ? "BOS+" : bosBear ? "BOS-" : "-"
+kzStatus  = inLondon ? "LDN" : inNYAM ? "NY-AM" : inNYPM ? "NY-PM" : "-"
+volRegTxt = volCompressed ? "COMP" : volExpanded ? "EXP" : "NORM"
+volRegClr = volCompressed ? color.new(#ff6d00, 0) : volExpanded ? color.new(#00e676, 0) : color.new(#8b949e, 0)
+rvolTxt   = rvol >= 1.5 ? "HIGH" : rvol >= 1.0 ? "OK" : rvol >= 0.7 ? "LOW" : "DEAD"
+rvolClr   = rvol >= 1.5 ? color.new(#00e676, 0) : rvol >= 1.0 ? color.new(#8b949e, 0) : color.new(#ff6d00, 0)
+
+var table dash = table.new(i_tblPos == "Top Right" ? position.top_right : i_tblPos == "Top Left" ? position.top_left : i_tblPos == "Bottom Right" ? position.bottom_right : position.bottom_left, 3, 14, bgcolor=color.new(#0d1117, 10), border_color=color.new(#30363d, 60), border_width=1, frame_color=color.new(#58a6ff, 40), frame_width=1)
+
+hdrBg   = color.new(#161b22, 20)
+hdrTxt  = color.new(#8b949e, 0)
+bullClr = color.new(#00e676, 0)
+bearClr = color.new(#ff1744, 0)
+dimTxt  = color.new(#58a6ff, 0)
+rowBg1  = color.new(#0d1117, 30)
+rowBg2  = color.new(#161b22, 20)
+ifvgClr = color.new(#bb86fc, 0)
+kzClr   = color.new(#ffd700, 0)
+
+if i_showTable and barstate.islast
+    table.cell(dash, 0, 0, "FVG v5.1", text_color=dimTxt,  bgcolor=hdrBg, text_size=size.tiny)
+    table.cell(dash, 1, 0, "BULL",     text_color=bullClr, bgcolor=hdrBg, text_size=size.tiny)
+    table.cell(dash, 2, 0, "BEAR",     text_color=bearClr, bgcolor=hdrBg, text_size=size.tiny)
+
+    table.cell(dash, 0, 1, "SETUP",    text_color=hdrTxt,  bgcolor=rowBg1, text_size=size.tiny)
+    table.cell(dash, 1, 1, ctxTxt,     text_color=ctxClr,  bgcolor=rowBg1, text_size=size.small)
+    table.cell(dash, 2, 1, "",         bgcolor=rowBg1)
+
+    table.cell(dash, 0, 2, "Open",     text_color=hdrTxt,  bgcolor=rowBg2, text_size=size.tiny)
+    table.cell(dash, 1, 2, str.tostring(openBull), text_color=bullClr, bgcolor=rowBg2, text_size=size.small)
+    table.cell(dash, 2, 2, str.tostring(openBear), text_color=bearClr, bgcolor=rowBg2, text_size=size.small)
+
+    abp  = avgProb(true)
+    abrp = avgProb(false)
+    table.cell(dash, 0, 3, "Avg Q",   text_color=hdrTxt, bgcolor=rowBg1, text_size=size.tiny)
+    table.cell(dash, 1, 3, na(abp)  ? "-" : str.format("{0}%", math.round(abp  * 100)), text_color=bullClr, bgcolor=rowBg1, text_size=size.tiny)
+    table.cell(dash, 2, 3, na(abrp) ? "-" : str.format("{0}%", math.round(abrp * 100)), text_color=bearClr, bgcolor=rowBg1, text_size=size.tiny)
+
+    trendTxt = bullTrend and aboveHTF ? "BULL" : bearTrend and belowHTF ? "BEAR" : "CHOP"
+    trendClr = bullTrend and aboveHTF ? bullClr : bearTrend and belowHTF ? bearClr : color.new(#8b949e, 0)
+    bosC     = bosBull ? bullClr : bosBear ? bearClr : hdrTxt
+    table.cell(dash, 0, 4, "Bias",    text_color=hdrTxt,   bgcolor=rowBg2, text_size=size.tiny)
+    table.cell(dash, 1, 4, trendTxt,  text_color=trendClr, bgcolor=rowBg2, text_size=size.tiny)
+    table.cell(dash, 2, 4, bosStatus, text_color=bosC,     bgcolor=rowBg2, text_size=size.tiny)
+
+    zoneClr = not haveRange ? hdrTxt : close > rangeMid ? bearClr : bullClr
+    table.cell(dash, 0, 5, "Zone",    text_color=hdrTxt,  bgcolor=rowBg1, text_size=size.tiny)
+    table.cell(dash, 1, 5, pdStatus,  text_color=zoneClr, bgcolor=rowBg1, text_size=size.tiny)
+    table.cell(dash, 2, 5, "",        bgcolor=rowBg1)
+
+    table.cell(dash, 0, 6, "Killzone", text_color=hdrTxt, bgcolor=rowBg2, text_size=size.tiny)
+    table.cell(dash, 1, 6, kzStatus,   text_color=inKZ ? kzClr : hdrTxt, bgcolor=rowBg2, text_size=size.tiny)
+    table.cell(dash, 2, 6, "",         bgcolor=rowBg2)
+
+    table.cell(dash, 0, 7, "VolReg",   text_color=hdrTxt, bgcolor=rowBg1, text_size=size.tiny)
+    table.cell(dash, 1, 7, volRegTxt,  text_color=volRegClr, bgcolor=rowBg1, text_size=size.tiny)
+    table.cell(dash, 2, 7, "",         bgcolor=rowBg1)
+
+    table.cell(dash, 0, 8, "RVOL",     text_color=hdrTxt, bgcolor=rowBg2, text_size=size.tiny)
+    table.cell(dash, 1, 8, rvolTxt + " " + str.format("{0,number,#.#}", rvol), text_color=rvolClr, bgcolor=rowBg2, text_size=size.tiny)
+    table.cell(dash, 2, 8, "",         bgcolor=rowBg2)
+
+    sweepTxt = sweepBull ? "SWEEP+" : sweepBear ? "SWEEP-" : "-"
+    sweepClr = sweepBull ? bullClr : sweepBear ? bearClr : hdrTxt
+    table.cell(dash, 0, 9, "Sweep",    text_color=hdrTxt,  bgcolor=rowBg1, text_size=size.tiny)
+    table.cell(dash, 1, 9, sweepTxt,   text_color=sweepClr, bgcolor=rowBg1, text_size=size.tiny)
+    table.cell(dash, 2, 9, str.tostring(array.size(ob_tops)) + " OBs", text_color=dimTxt, bgcolor=rowBg1, text_size=size.tiny)
+
+    table.cell(dash, 0, 10, "IFVG/CE", text_color=hdrTxt,  bgcolor=rowBg2, text_size=size.tiny)
+    table.cell(dash, 1, 10, str.tostring(openIFVG),  text_color=ifvgClr, bgcolor=rowBg2, text_size=size.tiny)
+    table.cell(dash, 2, 10, str.tostring(openCETap), text_color=dimTxt,  bgcolor=rowBg2, text_size=size.tiny)
+
+    blackoutTxt = openBlackout ? "OPEN" : closeBlackout ? "CLOSE" : lunchBlackout ? "LUNCH" : "-"
+    table.cell(dash, 0, 11, "Blackout", text_color=hdrTxt, bgcolor=rowBg1, text_size=size.tiny)
+    table.cell(dash, 1, 11, blackoutTxt, text_color=inBlackout ? color.new(#ff6d00, 0) : hdrTxt, bgcolor=rowBg1, text_size=size.tiny)
+    table.cell(dash, 2, 11, "",        bgcolor=rowBg1)
+
+    table.cell(dash, 0, 12, "Mode",    text_color=hdrTxt, bgcolor=rowBg2, text_size=size.tiny)
+    table.cell(dash, 1, 12, i_sigMode, text_color=dimTxt, bgcolor=rowBg2, text_size=size.tiny)
+    table.cell(dash, 2, 12, i_sigAplusOnly ? "A+ only" : "All tiers", text_color=dimTxt, bgcolor=rowBg2, text_size=size.tiny)
+
+    table.cell(dash, 0, 13, "Not financial advice", text_color=color.new(#4a4a4a, 0), bgcolor=hdrBg, text_size=size.tiny)
+    table.cell(dash, 1, 13, "", bgcolor=hdrBg)
+    table.cell(dash, 2, 13, "", bgcolor=hdrBg)
+
+
+plot(i_ShowEMA ? emaFast : na, color=color.new(#448aff, 60), linewidth=1, title="Fast EMA")
+plot(i_ShowEMA ? emaSlow : na, color=color.new(#f44336, 60), linewidth=1, title="Slow EMA")
+plot(i_ShowEMA ? emaHTF  : na, color=color.new(#ffd700, 70), linewidth=2, title="HTF EMA")
+
+//alerts
+alertcondition(fireTrendLong,  "LONG Trend Setup",  "LONG trend setup")
+alertcondition(fireTrendShort, "SHORT Trend Setup", "SHORT trend setup")
+alertcondition(fireRevLong,    "LONG Reversal",     "LONG reversal setup")
+alertcondition(fireRevShort,   "SHORT Reversal",    "SHORT reversal setup")
+alertcondition(sweepBull,      "Bullish Sweep",     "Liquidity sweep of lows")
+alertcondition(sweepBear,      "Bearish Sweep",     "Liquidity sweep of highs")

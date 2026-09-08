@@ -23,40 +23,15 @@ enum ENUM_LEGACY_EXIT_MODE {
     EXIT_STEP_CLOSE = 3   // 4. Step Close (Progressive Scale-out)
 };
 
-enum ENUM_ENGINE_A_MODE {
-    A_MODE_NORMAL = 0,         // 1. Normal (Current Logic)
-    A_MODE_MOMENTUM = 1,       // 2. Momentum Filter
-    A_MODE_DYNAMIC_TP = 2      // 3. Dynamic TP to EMA
-};
-
-enum ENUM_ENGINE_B_MODE {
-    B_MODE_NORMAL = 0,         // 1. Normal (ATR Trail)
-    B_MODE_SMART_TRAIL = 1,    // 2. Smart Structure Trail
-    B_MODE_PYRAMIDING = 2      // 3. Pyramiding (Scale-In)
-};
-
-enum ENUM_ENGINE_C_MODE {
-    C_MODE_NORMAL = 0,         // 1. Fixed % Distance
-    C_MODE_EXPANDING = 1,      // 2. Expanding Grid (x1.5 Dist)
-    C_MODE_SMART_SWEEP = 2     // 3. Smart Sweep (Wait for new low)
-};
-
-enum ENUM_ENGINE_D_MODE {
-    D_MODE_NORMAL = 0,         // 1. Normal (BOS Breakout)
-    D_MODE_KILLZONE = 1,       // 2. Session Killzone
-    D_MODE_LIQUIDITY = 2       // 3. Liquidity Sweep
-};
-
 double BaseBalance = 0; // Baseline for Port Goal
 
 input group "=== General Settings ==="
-input string InpVersion      = "v8.00 Penta-Engine"; // EA Version (For Reports)
+input string InpVersion      = "v7.13 Penta-Engine"; // EA Version (For Reports)
 input string InpSymbols      = "XAUUSD"; // Pairs to trade
 input ulong  InpMagic        = 777888;   // Base Magic
 input bool   InpShowDash     = true;     // Show Dashboard
 
 input group "=== Engine A: Mean Reversion ==="
-input ENUM_ENGINE_A_MODE InpEngineA_Mode = A_MODE_MOMENTUM; // Engine A Strategy
 input int    InpMaxPositions = 10;       // Max positions for Engine A
 input ENUM_TIMEFRAMES InpMA_TF     = PERIOD_H4;   // MA Timeframe (Zone Filter)
 input int             InpMA_Period = 200;         // MA Period (EMA)
@@ -68,30 +43,25 @@ input int    InpEngineA_SellStartHour = 1;        // Sell Start Hour (Broker Tim
 input int    InpEngineA_SellEndHour   = 13;       // Sell End Hour (Broker Time)
 
 input group "=== Engine B & B+: Trend Shared Settings ==="
-input ENUM_ENGINE_B_MODE InpEngineB_Mode = B_MODE_SMART_TRAIL; // Engine B Strategy
 input ENUM_TIMEFRAMES InpTrend_D1  = PERIOD_D1;    // Trend TF1: Daily
 input ENUM_TIMEFRAMES InpTrend_H4  = PERIOD_H4;    // Trend TF2: H4
 input double InpTrend_Trail_ATR    = 2.0;          // Trailing Stop (ATR multiplier)
-input double InpTrend_MinDist_ATR  = 1.0;          // Min distance between Trend orders (ATR)
+input double InpTrend_MinDist_ATR  = 1.0;          // Min distance between B/B+ orders (ATR)
 
 input group "=== Engine B: Trend Runner (Price > MA) ==="
 input bool   InpEnableTrend        = true;         // Enable Engine B
 input int    InpTrend_MaxPos       = 3;            // Max Engine B positions
-input int    InpTrend_MinFVG_Pts   = 50;           // Min FVG size (Points)
 
 input group "=== Engine B+: Trend Runner Dip (Price < MA) ==="
 input bool   InpEnableTrendPlus    = true;         // Enable Engine B+
 input int    InpTrendPlus_MaxPos   = 3;            // Max Engine B+ positions
 
 input group "=== Engine C: Legacy (Buy Only) ==="
-input ENUM_ENGINE_C_MODE InpEngineC_Mode = C_MODE_SMART_SWEEP; // Engine C Strategy
 input bool   InpEnableLegacy       = true;         // Enable Legacy Engine
 input ENUM_TIMEFRAMES InpLegacy_MA_TF = PERIOD_D1; // Legacy MA Timeframe
 input int    InpLegacy_MA_Period   = 200;          // Legacy MA Period (EMA)
-input double InpLegacy_DistPct     = 1.0;          // Base Distance to open new legacy (%)
+input double InpLegacy_DistPct     = 1.0;          // Distance to open new legacy (%)
 input int    InpLegacy_MaxPos      = 5;            // Max grid positions PER SLOT for averaging
-input double InpLegacy_LotMult     = 1.5;          // Martingale Lot Multiplier (1.0 = Off)
-input bool   InpLegacy_GlobalCheck = true;         // Use Global Minimum Distance Check
 input double InpLegacy_SurvivalPct = 30.0;         // Legacy Budget PER SLOT (%)
 input ENUM_LEGACY_EXIT_MODE InpLegacy_ExitMode = EXIT_STEP_CLOSE; // Legacy Exit Strategy
 input double InpLegacy_HarvestPct  = 6.0;          // [Target] Profit Trigger (% of Balance)
@@ -100,13 +70,10 @@ input double InpLegacy_StepCloseBase = 5.0;        // [Step Close] Base % of Vol
 input double InpPort_GoalPct       = 50.0;         // [Goal Setting] Portfolio Target (%)
 
 input group "=== Engine D: Snowball (Breakout) ==="
-input ENUM_ENGINE_D_MODE InpEngineD_Mode = D_MODE_KILLZONE; // Engine D Strategy
 input bool   InpEnableSnowball     = true;         // Enable Engine D
 input ENUM_TIMEFRAMES InpEngineD_TF = PERIOD_H4;   // Breakout Timeframe (BOS)
 input int    InpEngineD_MaxPos     = 5;            // Max Snowball positions
 input double InpEngineD_LotMult    = 2.0;          // Lot multiplier if NO Divergence
-input int    InpEngineD_KillzoneStart = 14;        // Killzone Start Hour (Broker Time)
-input int    InpEngineD_KillzoneEnd   = 22;        // Killzone End Hour (Broker Time)
 
 input group "=== Risk ==="
 input double InpSurvivalPct        = 50.0;         // Survive X% crash (keep 50% equity)
@@ -166,19 +133,6 @@ int CountLegacySlot(string sym, int slot) {
     return c;
 }
 
-
-
-double GetEngineBFloatingProfit(string sym) {
-    double pnl = 0;
-    for(int i=0; i<PositionsTotal(); i++) {
-        ulong m = PositionGetInteger(POSITION_MAGIC);
-        if(PositionGetString(POSITION_SYMBOL)==sym && (IsMagicB(m) || IsMagicBPlus(m))) {
-            pnl += PositionGetDouble(POSITION_PROFIT);
-        }
-    }
-    return pnl;
-}
-
 double GetLowestLegacySlotPrice(string sym, int slot) {
     double min_p = -1;
     for(int j=PositionsTotal()-1; j>=0; j--) {
@@ -186,27 +140,10 @@ double GetLowestLegacySlotPrice(string sym, int slot) {
         ulong m = PositionGetInteger(POSITION_MAGIC);
         if(PositionGetString(POSITION_SYMBOL)==sym && GetLegacySlot(m) == slot) {
             double p = PositionGetDouble(POSITION_PRICE_OPEN);
-            if(min_p < 0 || p < min_p) min_p = p;
+            if(min_p == -1 || p < min_p) min_p = p;
         }
     }
     return min_p;
-}
-
-double GetLowestLegacySlotLot(string sym, int slot) {
-    double min_p = -1;
-    double min_lot = 0;
-    for(int j=PositionsTotal()-1; j>=0; j--) {
-        ulong t = PositionGetTicket(j);
-        ulong m = PositionGetInteger(POSITION_MAGIC);
-        if(PositionGetString(POSITION_SYMBOL)==sym && GetLegacySlot(m) == slot) {
-            double p = PositionGetDouble(POSITION_PRICE_OPEN);
-            if(min_p < 0 || p < min_p) {
-                min_p = p;
-                min_lot = PositionGetDouble(POSITION_VOLUME);
-            }
-        }
-    }
-    return min_lot;
 }
 
 int GetActiveLegacySlot(string sym) {
@@ -454,12 +391,6 @@ double GetMA(string sym, ENUM_TIMEFRAMES tf, int period) {
     return (ArraySize(buf) > 0) ? buf[0] : 0;
 }
 
-double GetADX(string sym, ENUM_TIMEFRAMES tf, int period) {
-    int h = iADX(sym, tf, period);
-    double buf[]; CopyBuffer(h, 0, 0, 1, buf); IndicatorRelease(h);
-    return (ArraySize(buf) > 0) ? buf[0] : 0;
-}
-
 //--- Helper: Get extreme prices for Engine A to prevent buying higher or selling lower ---
 double GetLowestABuy(string sym) {
     double min_p = -1;
@@ -524,36 +455,8 @@ bool IsTooClose(string sym, double target_price, int magic_base, int max_pos, do
     return false;
 }
 
-ulong last_deal_ticket = 0;
-double pnl_A=0, pnl_B=0, pnl_C=0, pnl_D=0;
-
-void UpdatePnL() {
-    HistorySelect(0, TimeCurrent());
-    int total = HistoryDealsTotal();
-    ulong highest_ticket = last_deal_ticket;
-    for(int i=total-1; i>=0; i--) {
-        ulong t = HistoryDealGetTicket(i);
-        if(t == last_deal_ticket) break; // Reached known deals
-        
-        ulong magic = HistoryDealGetInteger(t, DEAL_MAGIC);
-        double profit = HistoryDealGetDouble(t, DEAL_PROFIT);
-        double swap = HistoryDealGetDouble(t, DEAL_SWAP);
-        double comm = HistoryDealGetDouble(t, DEAL_COMMISSION);
-        double net = profit + swap + comm;
-        
-        if(IsMagicA(magic)) pnl_A += net;
-        else if(IsMagicB(magic) || IsMagicBPlus(magic)) pnl_B += net;
-        else if(IsMagicC(magic)) pnl_C += net;
-        else if(IsMagicD(magic)) pnl_D += net;
-        
-        if(i == total-1) highest_ticket = t;
-    }
-    last_deal_ticket = highest_ticket;
-}
-
 void OnTimer()
 {
-    UpdatePnL();
     CheckPortGoal();
     
     bool isFastTest = (MQLInfoInteger(MQL_TESTER) && !MQLInfoInteger(MQL_VISUAL_MODE));
@@ -614,14 +517,6 @@ void OnTimer()
         }
         prev_m15_struct[i] = m15_struct;
         
-        // Upgrade 1: Momentum Filter (A_MODE_MOMENTUM)
-        if(fresh_signal && InpEngineA_Mode == A_MODE_MOMENTUM) {
-            double adx = GetADX(sym, InpEntryTF, 14);
-            if(adx > 30.0) {
-                fresh_signal = false; // Trend is too strong
-            }
-        }
-        
         if(fresh_signal && CountEngineA(sym) < InpMaxPositions) {
             int nl = GetNextLayerA(sym);
             if(nl > 0) {
@@ -667,25 +562,12 @@ void OnTimer()
             if(d1_struct == 1 && h4_struct == 1 && bid > ma && m15_struct == 1) {
                 int nl = GetNextLayerB(sym);
                 if(nl > 0) {
-                    bool can_pyramid = true;
-                    if(InpEngineB_Mode == B_MODE_PYRAMIDING && CountEngineB(sym) > 0) {
-                        if(GetEngineBFloatingProfit(sym) <= 0) can_pyramid = false;
-                    }
-                    
-                    if(can_pyramid) {
-                        double lot = GetSafeLot(sym, true);
-                        if(InpEngineB_Mode == B_MODE_PYRAMIDING && nl > 1) {
-                            lot = lot * (1.0 / nl); // Reduce lot size for higher layers (e.g. 1/2, 1/3)
-                            double step = SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP);
-                            lot = MathFloor(lot / step) * step;
-                        }
-                        
-                        if(lot > 0) {
-                            SMC_Zone bf[]; int bc = smc.GetActiveFVGs(sym, InpEntryTF, true, bf, 3);
-                            if(bc > 0 && !IsTooClose(sym, bf[0].poc, MAGIC_TREND, InpTrend_MaxPos, InpTrend_MinDist_ATR)) {
-                                trade.SetExpertMagicNumber(InpMagic + MAGIC_TREND + nl);
-                                trade.BuyLimit(lot, bf[0].poc, sym, 0, 0, ORDER_TIME_GTC, 0, "B_TrendRun");
-                            }
+                    double lot = GetSafeLot(sym, true);
+                    if(lot > 0) {
+                        SMC_Zone bf[]; int bc = smc.GetActiveFVGs(sym, InpEntryTF, true, bf, 3);
+                        if(bc > 0 && !IsTooClose(sym, bf[0].poc, MAGIC_TREND, InpTrend_MaxPos, InpTrend_MinDist_ATR)) {
+                            trade.SetExpertMagicNumber(InpMagic + MAGIC_TREND + nl);
+                            trade.BuyLimit(lot, bf[0].poc, sym, 0, 0, ORDER_TIME_GTC, 0, "B_TrendRun");
                         }
                     }
                 }
@@ -698,25 +580,12 @@ void OnTimer()
             if(d1_struct == 1 && h4_struct == 1 && bid < ma && m15_struct == 1) {
                 int nl = GetNextLayerBPlus(sym);
                 if(nl > 0) {
-                    bool can_pyramid = true;
-                    if(InpEngineB_Mode == B_MODE_PYRAMIDING && CountEngineBPlus(sym) > 0) {
-                        if(GetEngineBFloatingProfit(sym) <= 0) can_pyramid = false;
-                    }
-                    
-                    if(can_pyramid) {
-                        double lot = GetSafeLot(sym, true);
-                        if(InpEngineB_Mode == B_MODE_PYRAMIDING && nl > 1) {
-                            lot = lot * (1.0 / nl);
-                            double step = SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP);
-                            lot = MathFloor(lot / step) * step;
-                        }
-                        
-                        if(lot > 0) {
-                            SMC_Zone bf[]; int bc = smc.GetActiveFVGs(sym, InpEntryTF, true, bf, 3);
-                            if(bc > 0 && !IsTooClose(sym, bf[0].poc, MAGIC_TREND_PLUS, InpTrendPlus_MaxPos, InpTrend_MinDist_ATR)) {
-                                trade.SetExpertMagicNumber(InpMagic + MAGIC_TREND_PLUS + nl);
-                                trade.BuyLimit(lot, bf[0].poc, sym, 0, 0, ORDER_TIME_GTC, 0, "B+_TrendDip");
-                            }
+                    double lot = GetSafeLot(sym, true);
+                    if(lot > 0) {
+                        SMC_Zone bf[]; int bc = smc.GetActiveFVGs(sym, InpEntryTF, true, bf, 3);
+                        if(bc > 0 && !IsTooClose(sym, bf[0].poc, MAGIC_TREND_PLUS, InpTrendPlus_MaxPos, InpTrend_MinDist_ATR)) {
+                            trade.SetExpertMagicNumber(InpMagic + MAGIC_TREND_PLUS + nl);
+                            trade.BuyLimit(lot, bf[0].poc, sym, 0, 0, ORDER_TIME_GTC, 0, "B+_TrendDip");
                         }
                     }
                 }
@@ -737,42 +606,9 @@ void OnTimer()
                     can_open = true; // First entry for this slot
                 } else if(c_count < InpLegacy_MaxPos) {
                     double lowest_p = GetLowestLegacySlotPrice(sym, s);
-                    if(lowest_p > 0) {
-                        double required_dist = InpLegacy_DistPct;
-                        if(InpEngineC_Mode == C_MODE_EXPANDING) {
-                            required_dist = InpLegacy_DistPct * MathPow(1.5, c_count); // 1.5, 2.25, 3.375...
-                        }
-                        
-                        bool dist_met = (((lowest_p - ask) / lowest_p * 100.0) >= required_dist);
-                        if(dist_met) {
-                            if(InpEngineC_Mode == C_MODE_SMART_SWEEP) {
-                                if(smc.CheckBullishSweep(sym, PERIOD_M15, 10)) can_open = true;
-                            } else {
-                                can_open = true;
-                            }
-                        }
-                    }
-                }
-                
-                // Idea 3: Global Minimum Distance Check (prevent clustering across engines)
-                if(can_open && InpLegacy_GlobalCheck && c_count > 0) {
-                    double atr[]; int ah = iATR(sym, PERIOD_D1, 14);
-                    CopyBuffer(ah, 0, 0, 1, atr); IndicatorRelease(ah);
-                    double a = (ArraySize(atr)>0) ? atr[0] : 0;
-                    if(a > 0) {
-                        for(int j=0; j<PositionsTotal(); j++) {
-                            if(PositionGetString(POSITION_SYMBOL) != sym) continue;
-                            double open = PositionGetDouble(POSITION_PRICE_OPEN);
-                            double sl = PositionGetDouble(POSITION_SL);
-                            long type = PositionGetInteger(POSITION_TYPE);
-                            bool is_unprotected = false;
-                            if(type == POSITION_TYPE_BUY && (sl == 0.0 || sl < open)) is_unprotected = true;
-                            if(type == POSITION_TYPE_SELL && (sl == 0.0 || sl > open)) is_unprotected = true;
-                            
-                            if(is_unprotected) {
-                                if(MathAbs(ask - open) < a * 0.5) { can_open = false; break; }
-                            }
-                        }
+                    // Open next layer for this slot if price drops by DistPct
+                    if(lowest_p > 0 && ((lowest_p - ask) / lowest_p * 100.0) >= InpLegacy_DistPct) {
+                        can_open = true;
                     }
                 }
                 
@@ -780,15 +616,6 @@ void OnTimer()
                     int nl = GetNextLayerLegacySlot(sym, s);
                     if(nl > 0) {
                         double lot = GetSafeLot(sym, true, true);
-                        if(c_count > 0 && InpLegacy_LotMult > 1.0) {
-                            double last_lot = GetLowestLegacySlotLot(sym, s);
-                            if(last_lot > 0) {
-                                lot = last_lot * InpLegacy_LotMult;
-                                double step = SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP);
-                                lot = MathFloor(lot / step) * step;
-                            }
-                        }
-                        
                         if(lot > 0) {
                             trade.SetExpertMagicNumber(InpMagic + MAGIC_LEGACY_BASE + (s * 10) + nl);
                             if(trade.Buy(lot, sym, ask, 0, 0, "C_Legacy" + IntegerToString(s))) {
@@ -807,24 +634,11 @@ void OnTimer()
         if(current_d_bar != last_d_bar_time[i] && current_d_bar != 0) {
             last_d_bar_time[i] = current_d_bar;
             if(InpEnableSnowball && CountEngineD(sym) < InpEngineD_MaxPos) {
-                // Option 2: Killzone Filter (D_MODE_KILLZONE)
-                bool killzone_ok = true;
-                if(InpEngineD_Mode == D_MODE_KILLZONE) {
-                    MqlDateTime dt; TimeToStruct(TimeCurrent(), dt);
-                    if(dt.hour < InpEngineD_KillzoneStart || dt.hour > InpEngineD_KillzoneEnd) killzone_ok = false;
-                }
-                
-                if(killzone_ok && h4_struct == 1) {
+                // Check if current trend is Bullish (CHoCH Bullish happened)
+                if(h4_struct == 1) {
                     // Check for fresh Bullish BOS (Breakout above previous swing high)
                     int bos_status = smc.CheckBreakoutDivergence(sym, InpEngineD_TF);
-                    
-                    // Option 3: Liquidity Sweep Filter (D_MODE_LIQUIDITY)
-                    bool liq_ok = true;
-                    if(InpEngineD_Mode == D_MODE_LIQUIDITY) {
-                        liq_ok = smc.CheckBullishSweep(sym, InpEngineD_TF, 10);
-                    }
-                    
-                    if(liq_ok && (bos_status == 1 || bos_status == 2)) { // 1 = Breakout with Div, 2 = Breakout NO Div (Strong)
+                    if(bos_status == 1 || bos_status == 2) { // 1 = Breakout with Div, 2 = Breakout NO Div (Strong)
                         if(!IsTooClose(sym, ask, MAGIC_SNOWBALL, InpEngineD_MaxPos, InpTrend_MinDist_ATR)) {
                             bool can_snowball = true;
                             for(int j=PositionsTotal()-1; j>=0; j--) {
@@ -893,24 +707,15 @@ void ManageEngineA(string sym, double ma, double bid, double ask) {
         long type = PositionGetInteger(POSITION_TYPE);
         double sl = PositionGetDouble(POSITION_SL);
         
-        bool should_close = false;
-        
-        // Upgrade 2: Dynamic TP to EMA (A_MODE_DYNAMIC_TP)
-        if(InpEngineA_Mode == A_MODE_DYNAMIC_TP) {
-            if(type == POSITION_TYPE_BUY && bid >= ma) should_close = true;
-            if(type == POSITION_TYPE_SELL && ask <= ma) should_close = true;
-        } else {
-            // Normal ATR TP
-            if(type == POSITION_TYPE_BUY && bid >= open + a * InpTP_ATR) should_close = true;
-            if(type == POSITION_TYPE_SELL && ask <= open - a * InpTP_ATR) should_close = true;
+        if(type == POSITION_TYPE_BUY && bid >= open + a * InpTP_ATR) {
+            trade.PositionClose(ticket); continue;
         }
-        
-        if(should_close) {
-            trade.PositionClose(ticket); 
-            continue;
-        }
-        
         if(type == POSITION_TYPE_SELL) {
+            // Hard TP
+            if(ask <= open - a * InpTP_ATR) {
+                trade.PositionClose(ticket); continue;
+            }
+            
             // MA EXIT GUARD: SELL ONLY
             if(bid > ma) {
                 trade.PositionClose(ticket); continue;
@@ -948,30 +753,13 @@ void ManageEnginesTrend(string sym, double bid, double ask) {
         
         // B and B+ are Buy Only and use Trailing Stop
         if(type == POSITION_TYPE_BUY) {
-            // Upgrade 1: Smart Structure Trail (B_MODE_SMART_TRAIL)
-            if(InpEngineB_Mode == B_MODE_SMART_TRAIL) {
-                if(bid > open + a * 1.5) {
-                    double swing_low = smc.GetLastSwingLow(sym, InpTrend_H4, 3);
-                    if(swing_low > 0 && swing_low > open) {
-                        double smart_trail = swing_low - (a * 0.2); // Trail slightly below the swing low
-                        if(smart_trail > sl || sl == 0.0) {
-                            trade.PositionModify(ticket, smart_trail, 0.0);
-                        }
-                    } else if(sl == 0.0 && bid > open + a * 1.0) {
-                        // Fallback break-even if no swing low found above open yet
-                        trade.PositionModify(ticket, open, 0.0);
-                    }
-                }
-            } else {
-                // Normal ATR Trailing
-                if(bid > open + a * 1.0 && sl == 0.0) {
-                    trade.PositionModify(ticket, open, 0.0);
-                }
-                if(bid > open + a * 1.5) {
-                    double trail = bid - a * InpTrend_Trail_ATR;
-                    if(trail > sl || sl == 0.0) {
-                        trade.PositionModify(ticket, trail, 0.0);
-                    }
+            if(bid > open + a * 1.0 && sl == 0.0) {
+                trade.PositionModify(ticket, open, 0.0);
+            }
+            if(bid > open + a * 1.5) {
+                double trail = bid - a * InpTrend_Trail_ATR;
+                if(trail > sl || sl == 0.0) {
+                    trade.PositionModify(ticket, trail, 0.0);
                 }
             }
         }
@@ -1161,7 +949,7 @@ void DrawDashboard() {
     double equity = AccountInfoDouble(ACCOUNT_EQUITY);
     int active_slot = GetActiveLegacySlot(Symbol());
     
-    string txt = "=== APEX v8.00 PENTA-ENGINE ===\n";
+    string txt = "=== APEX v7.12 PENTA-ENGINE ===\n";
     txt += "Equity: $" + DoubleToString(equity, 2) + "\n";
     txt += "A:MeanRev | B/B+:Trend | C:Legacy | D:Snowball\n\n";
     
@@ -1171,12 +959,6 @@ void DrawDashboard() {
     txt += "Legacy Total Budget: " + DoubleToString(InpLegacy_SurvivalPct, 1) + "%\n";
     txt += "Active Legacy Slot : " + IntegerToString(active_slot) + " / " + IntegerToString(MAX_LEGACY_SLOTS) + "\n";
     txt += "Trend/MeanRev Risk : " + DoubleToString(InpSurvivalPct, 1) + "%\n\n";
-
-    txt += ">> PROFIT BY ENGINE (REALTIME) <<\n";
-    txt += "Engine A (Mean Rev): $" + DoubleToString(pnl_A, 2) + "\n";
-    txt += "Engine B (Trend)   : $" + DoubleToString(pnl_B, 2) + "\n";
-    txt += "Engine C (Legacy)  : $" + DoubleToString(pnl_C, 2) + "\n";
-    txt += "Engine D (Snowball): $" + DoubleToString(pnl_D, 2) + "\n\n";
     
     for(int i=0; i<sym_count; i++) {
         string sym = symbols[i];
