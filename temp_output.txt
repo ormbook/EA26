@@ -1,0 +1,222 @@
+input group "=== General Settings ==="
+input string InpVersion      = "v9.00 Master-Level"; // EA Version
+input string InpSymbols      = "XAUUSD"; // Pairs to trade
+input ulong user_InpMagic = 777888;   // Base Magic
+input bool user_InpShowDash = true;     // Show Dashboard
+
+input group "=== ⚡ Risk & Auto Configuration ==="
+input ENUM_RISK_LEVEL user_InpRiskLevel = RISK_3_BALANCE; // System Risk Preset
+input double user_InpBaseLot_A = 0.01; // Base Lot: Engine A (Cashflow)
+input double user_InpBaseLot_B = 0.02; // Base Lot: Engine B (Trend/Pyramiding)
+input double user_InpBaseLot_C = 0.01; // Base Lot: Engine C (Legacy/Rescue)
+input double user_InpBaseLot_D = 0.02; // Base Lot: Engine D (Breakout/Killzone)
+
+input group "=== Engine A: Mean Reversion ==="
+input bool user_InpEnableEngineA = true;        // Enable Engine A
+input ENUM_ENGINE_A_MODE user_InpEngineA_Mode = A_MODE_MOMENTUM; // Engine A Strategy
+input int user_InpMaxPositions = 10;       // Max positions for Engine A
+input ENUM_TIMEFRAMES user_InpMA_TF = PERIOD_H4;   // MA Timeframe (Zone Filter)
+input int user_InpMA_Period = 200;         // MA Period (EMA)
+input ENUM_TIMEFRAMES user_InpEntryTF = PERIOD_M15;  // Entry TF for FVG
+input double user_InpTP_ATR = 0.5;         // TP (ATR multiplier)
+input double user_InpA_MinDist_ATR = 1.0;         // Min distance between A orders (ATR)
+input bool user_InpCutOnCHoCH = true;        // Emergency H4 CHoCH cut (SELL ONLY)
+input int user_InpEngineA_SellStartHour = 1;        // Sell Start Hour (Broker Time)
+input int user_InpEngineA_SellEndHour = 13;       // Sell End Hour (Broker Time)
+
+input group "=== Engine B & B+: Trend Shared Settings ==="
+input ENUM_ENGINE_B_MODE user_InpEngineB_Mode = B_MODE_SMART_TRAIL; // Engine B Strategy
+input ENUM_TIMEFRAMES user_InpTrend_D1 = PERIOD_D1;    // Trend TF1: Daily
+input ENUM_TIMEFRAMES user_InpTrend_H4 = PERIOD_H4;    // Trend TF2: H4
+input double user_InpTrend_Trail_ATR = 2.0;          // Trailing Stop (ATR multiplier)
+input double user_InpTrend_MinDist_ATR = 1.0;          // Min distance between Trend orders (ATR)
+
+input group "=== Engine B: Trend Runner (Price > MA) ==="
+input bool user_InpEnableTrend = true;         // Enable Engine B
+input int user_InpTrend_MaxPos = 3;            // Max Engine B positions
+input int user_InpTrend_MinFVG_Pts = 50;           // Min FVG size (Points)
+
+input group "=== Engine B+: Trend Runner Dip (Price < MA) ==="
+input bool user_InpEnableTrendPlus = true;         // Enable Engine B+
+input int user_InpTrendPlus_MaxPos = 3;            // Max Engine B+ positions
+
+input group "=== Engine C: Legacy (Buy Only) ==="
+input ENUM_ENGINE_C_MODE user_InpEngineC_Mode = C_MODE_SMART_SWEEP; // Engine C Strategy
+input bool user_InpEnableLegacy = true;         // Enable Legacy Engine (Engine C)
+input ENUM_TIMEFRAMES user_InpLegacy_MA_TF = PERIOD_D1; // Legacy MA Timeframe
+input int user_InpLegacy_MA_Period = 200;          // Legacy MA Period (EMA)
+input double user_InpLegacy_DistPct = 1.0;          // Base Distance to open new legacy (%)
+input int user_InpLegacy_MaxPos = 5;            // Max grid positions PER SLOT for averaging
+input double user_InpLegacy_LotMult = 1.5;          // Martingale Lot Multiplier (1.0 = Off)
+input bool user_InpLegacy_GlobalCheck = true;         // Use Global Minimum Distance Check
+input double user_InpLegacy_SurvivalPct = 30.0;         // Legacy Budget PER SLOT (%)
+input ENUM_LEGACY_EXIT_MODE user_InpLegacy_ExitMode = EXIT_STEP_CLOSE; // Legacy Exit Strategy
+input double user_InpLegacy_HarvestPct = 6.0;          // [Target] Profit Trigger (% of Balance)
+input double user_InpLegacy_HarvestClose = 50.0;         // [Rebalance] % of Volume to close
+input double user_InpLegacy_StepCloseBase = 5.0;        // [Step Close] Base % of Vol to close (e.g. 5,10,15)
+input double user_InpPort_GoalPct = 50.0;         // [Goal Setting] Portfolio Target (%)
+
+input group "=== Engine D: Snowball (Breakout) ==="
+input ENUM_ENGINE_D_MODE user_InpEngineD_Mode = D_MODE_KILLZONE; // Engine D Strategy
+input bool user_InpEnableSnowball = true;         // Enable Engine D
+input ENUM_TIMEFRAMES user_InpEngineD_TF = PERIOD_H4;   // Breakout Timeframe (BOS)
+input int user_InpEngineD_MaxPos = 5;            // Max Snowball positions
+input double user_InpEngineD_LotMult = 2.0;          // Lot multiplier if NO Divergence
+input int user_InpEngineD_KillzoneStart = 14;        // Killzone Start Hour (Broker Time)
+input int user_InpEngineD_KillzoneEnd = 22;        // Killzone End Hour (Broker Time)
+
+input group "=== Risk ==="
+input double user_InpSurvivalPct = 50.0;         // Survive X% crash (keep 50% equity)
+
+//--- GLOBALS ---
+ulong InpMagic;
+bool InpShowDash;
+ENUM_RISK_LEVEL InpRiskLevel;
+double InpBaseLot_A;
+double InpBaseLot_B;
+double InpBaseLot_C;
+double InpBaseLot_D;
+bool InpEnableEngineA;
+ENUM_ENGINE_A_MODE InpEngineA_Mode;
+int InpMaxPositions;
+ENUM_TIMEFRAMES InpMA_TF;
+int InpMA_Period;
+ENUM_TIMEFRAMES InpEntryTF;
+double InpTP_ATR;
+double InpA_MinDist_ATR;
+bool InpCutOnCHoCH;
+int InpEngineA_SellStartHour;
+int InpEngineA_SellEndHour;
+ENUM_ENGINE_B_MODE InpEngineB_Mode;
+ENUM_TIMEFRAMES InpTrend_D1;
+ENUM_TIMEFRAMES InpTrend_H4;
+double InpTrend_Trail_ATR;
+double InpTrend_MinDist_ATR;
+bool InpEnableTrend;
+int InpTrend_MaxPos;
+int InpTrend_MinFVG_Pts;
+bool InpEnableTrendPlus;
+int InpTrendPlus_MaxPos;
+ENUM_ENGINE_C_MODE InpEngineC_Mode;
+bool InpEnableLegacy;
+ENUM_TIMEFRAMES InpLegacy_MA_TF;
+int InpLegacy_MA_Period;
+double InpLegacy_DistPct;
+int InpLegacy_MaxPos;
+double InpLegacy_LotMult;
+bool InpLegacy_GlobalCheck;
+double InpLegacy_SurvivalPct;
+ENUM_LEGACY_EXIT_MODE InpLegacy_ExitMode;
+double InpLegacy_HarvestPct;
+double InpLegacy_HarvestClose;
+double InpLegacy_StepCloseBase;
+double InpPort_GoalPct;
+ENUM_ENGINE_D_MODE InpEngineD_Mode;
+bool InpEnableSnowball;
+ENUM_TIMEFRAMES InpEngineD_TF;
+int InpEngineD_MaxPos;
+double InpEngineD_LotMult;
+int InpEngineD_KillzoneStart;
+int InpEngineD_KillzoneEnd;
+double InpSurvivalPct;
+
+//--- INIT ---
+void ApplyRiskLevelSettings() {
+    InpMagic = user_InpMagic;
+    InpShowDash = user_InpShowDash;
+    InpRiskLevel = user_InpRiskLevel;
+    InpBaseLot_A = user_InpBaseLot_A;
+    InpBaseLot_B = user_InpBaseLot_B;
+    InpBaseLot_C = user_InpBaseLot_C;
+    InpBaseLot_D = user_InpBaseLot_D;
+    InpEnableEngineA = user_InpEnableEngineA;
+    InpEngineA_Mode = user_InpEngineA_Mode;
+    InpMaxPositions = user_InpMaxPositions;
+    InpMA_TF = user_InpMA_TF;
+    InpMA_Period = user_InpMA_Period;
+    InpEntryTF = user_InpEntryTF;
+    InpTP_ATR = user_InpTP_ATR;
+    InpA_MinDist_ATR = user_InpA_MinDist_ATR;
+    InpCutOnCHoCH = user_InpCutOnCHoCH;
+    InpEngineA_SellStartHour = user_InpEngineA_SellStartHour;
+    InpEngineA_SellEndHour = user_InpEngineA_SellEndHour;
+    InpEngineB_Mode = user_InpEngineB_Mode;
+    InpTrend_D1 = user_InpTrend_D1;
+    InpTrend_H4 = user_InpTrend_H4;
+    InpTrend_Trail_ATR = user_InpTrend_Trail_ATR;
+    InpTrend_MinDist_ATR = user_InpTrend_MinDist_ATR;
+    InpEnableTrend = user_InpEnableTrend;
+    InpTrend_MaxPos = user_InpTrend_MaxPos;
+    InpTrend_MinFVG_Pts = user_InpTrend_MinFVG_Pts;
+    InpEnableTrendPlus = user_InpEnableTrendPlus;
+    InpTrendPlus_MaxPos = user_InpTrendPlus_MaxPos;
+    InpEngineC_Mode = user_InpEngineC_Mode;
+    InpEnableLegacy = user_InpEnableLegacy;
+    InpLegacy_MA_TF = user_InpLegacy_MA_TF;
+    InpLegacy_MA_Period = user_InpLegacy_MA_Period;
+    InpLegacy_DistPct = user_InpLegacy_DistPct;
+    InpLegacy_MaxPos = user_InpLegacy_MaxPos;
+    InpLegacy_LotMult = user_InpLegacy_LotMult;
+    InpLegacy_GlobalCheck = user_InpLegacy_GlobalCheck;
+    InpLegacy_SurvivalPct = user_InpLegacy_SurvivalPct;
+    InpLegacy_ExitMode = user_InpLegacy_ExitMode;
+    InpLegacy_HarvestPct = user_InpLegacy_HarvestPct;
+    InpLegacy_HarvestClose = user_InpLegacy_HarvestClose;
+    InpLegacy_StepCloseBase = user_InpLegacy_StepCloseBase;
+    InpPort_GoalPct = user_InpPort_GoalPct;
+    InpEngineD_Mode = user_InpEngineD_Mode;
+    InpEnableSnowball = user_InpEnableSnowball;
+    InpEngineD_TF = user_InpEngineD_TF;
+    InpEngineD_MaxPos = user_InpEngineD_MaxPos;
+    InpEngineD_LotMult = user_InpEngineD_LotMult;
+    InpEngineD_KillzoneStart = user_InpEngineD_KillzoneStart;
+    InpEngineD_KillzoneEnd = user_InpEngineD_KillzoneEnd;
+    InpSurvivalPct = user_InpSurvivalPct;
+
+    if (user_InpRiskLevel != RISK_MANUAL) {
+        // Level 5: Aggressive
+        if (user_InpRiskLevel == RISK_5_AGGRESSIVE) {
+            InpEngineA_Mode = A_MODE_NORMAL;
+            InpEngineB_Mode = B_MODE_SMART_TRAIL;
+            InpEngineC_Mode = C_MODE_SMART_SWEEP;
+            InpLegacy_ExitMode = EXIT_STEP_CLOSE;
+            InpEngineD_Mode = D_MODE_KILLZONE;
+            InpLegacy_LotMult = 1.5;
+        }
+        // Level 4: Attacking
+        else if (user_InpRiskLevel == RISK_4_ATTACK) {
+            InpEngineA_Mode = A_MODE_MOMENTUM;
+            InpEngineB_Mode = B_MODE_SMART_TRAIL;
+            InpEngineC_Mode = C_MODE_EXPANDING;
+            InpLegacy_ExitMode = EXIT_STEP_CLOSE;
+            InpEngineD_Mode = D_MODE_KILLZONE;
+        }
+        // Level 3: Balance
+        else if (user_InpRiskLevel == RISK_3_BALANCE) {
+            InpEngineA_Mode = A_MODE_MOMENTUM;
+            InpEngineB_Mode = B_MODE_PYRAMIDING;
+            InpEngineC_Mode = C_MODE_SMART_SWEEP;
+            InpLegacy_ExitMode = EXIT_STEP_CLOSE;
+            InpEngineD_Mode = D_MODE_KILLZONE;
+        }
+        // Level 2: Safe
+        else if (user_InpRiskLevel == RISK_2_SAFE) {
+            InpEngineA_Mode = A_MODE_MOMENTUM;
+            InpEngineB_Mode = B_MODE_PYRAMIDING;
+            InpEngineC_Mode = C_MODE_EXPANDING;
+            InpLegacy_ExitMode = EXIT_PORT_GOAL;
+            InpEngineD_Mode = D_MODE_LIQUIDITY;
+        }
+        // Level 1: Sleep
+        else if (user_InpRiskLevel == RISK_1_SLEEP) {
+            InpEngineA_Mode = A_MODE_MOMENTUM;
+            InpEngineB_Mode = B_MODE_PYRAMIDING;
+            InpEngineC_Mode = C_MODE_SMART_SWEEP;
+            InpLegacy_ExitMode = EXIT_PORT_GOAL;
+            InpEngineD_Mode = D_MODE_LIQUIDITY;
+            InpLegacy_GlobalCheck = true;
+            InpTrend_MaxPos = 2;
+        }
+    }
+}
+
