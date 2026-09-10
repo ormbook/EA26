@@ -129,6 +129,10 @@ input double user_InpLegacy_HarvestPct = 6.0;          // [Target] Profit Trigge
 input double user_InpLegacy_HarvestClose = 50.0;         // [Rebalance] % of Volume to close
 input double user_InpLegacy_StepCloseBase = 5.0;        // [Step Close] Base % of Vol to close (e.g. 5,10,15)
 input double user_InpPort_GoalPct = 50.0;         // [Goal Setting] Portfolio Target (%)
+input bool user_InpLegacy_EnableTrailingOut = true; // [Trailing] Enable Trailing Scale-Out
+input double user_InpLegacy_TrailStartPct = 5.0; // [Trailing] Min Profit % (Price) to Start
+input double user_InpLegacy_TrailStepPct = 10.0; // [Trailing] Drawdown % from Peak to Trigger Close
+input double user_InpLegacy_TrailClosePct = 25.0; // [Trailing] % of Initial Volume to Close per Step
 
 input group "=== Engine D: Snowball (Breakout) ==="
 input ENUM_ENGINE_D_MODE user_InpEngineD_Mode = D_MODE_KILLZONE; // Engine D Strategy
@@ -197,6 +201,10 @@ double InpLegacy_HarvestPct;
 double InpLegacy_HarvestClose;
 double InpLegacy_StepCloseBase;
 double InpPort_GoalPct;
+bool InpLegacy_EnableTrailingOut;
+double InpLegacy_TrailStartPct;
+double InpLegacy_TrailStepPct;
+double InpLegacy_TrailClosePct;
 ENUM_ENGINE_D_MODE InpEngineD_Mode;
 bool InpEnableSnowball;
 ENUM_TIMEFRAMES InpEngineD_TF;
@@ -269,6 +277,10 @@ void ApplyRiskLevelSettings() {
     InpLegacy_HarvestClose = user_InpLegacy_HarvestClose;
     InpLegacy_StepCloseBase = user_InpLegacy_StepCloseBase;
     InpPort_GoalPct = user_InpPort_GoalPct;
+    InpLegacy_EnableTrailingOut = user_InpLegacy_EnableTrailingOut;
+    InpLegacy_TrailStartPct = user_InpLegacy_TrailStartPct;
+    InpLegacy_TrailStepPct = user_InpLegacy_TrailStepPct;
+    InpLegacy_TrailClosePct = user_InpLegacy_TrailClosePct;
     InpEngineD_Mode = user_InpEngineD_Mode;
     InpEnableSnowball = user_InpEnableSnowball;
     InpEngineD_TF = user_InpEngineD_TF;
@@ -1393,8 +1405,73 @@ int GetStepLevel(double initial_vol, double current_vol, double base_pct) {
 }
 
 //--- ENGINE C: Legacy Management (Break-even Guard) ---
+
+void CheckLegacyTrailingOut(string sym) {
+    if(!InpLegacy_EnableTrailingOut) return;
+    
+    for(int j=PositionsTotal()-1; j>=0; j--) {
+        ulong t = PositionGetTicket(j);
+        ulong m = PositionGetInteger(POSITION_MAGIC);
+        if(PositionGetString(POSITION_SYMBOL) == sym && IsMagicC(m)) {
+            long type = PositionGetInteger(POSITION_TYPE);
+            if(type != POSITION_TYPE_BUY) continue; 
+            
+            double open_price = PositionGetDouble(POSITION_PRICE_OPEN);
+            double current_price = PositionGetDouble(POSITION_PRICE_CURRENT);
+            datetime open_time = (datetime)PositionGetInteger(POSITION_TIME);
+            
+            int start_shift = iBarShift(sym, PERIOD_M15, open_time);
+            if(start_shift < 0) start_shift = 0;
+            
+            int highest_idx = iHighest(sym, PERIOD_M15, MODE_HIGH, start_shift, 0);
+            double max_price = current_price;
+            if(highest_idx >= 0) {
+                max_price = iHigh(sym, PERIOD_M15, highest_idx);
+            }
+            if(current_price > max_price) max_price = current_price;
+            
+            double max_profit_points = max_price - open_price;
+            if(max_profit_points <= 0) continue;
+            
+            double max_profit_pct = (max_profit_points / open_price) * 100.0;
+            
+            if(max_profit_pct >= InpLegacy_TrailStartPct) {
+                double current_profit_points = current_price - open_price;
+                double retracement_points = max_profit_points - current_profit_points;
+                if(retracement_points < 0) retracement_points = 0;
+                double retracement_pct = (retracement_points / max_profit_points) * 100.0; 
+                
+                int steps_should_be_closed = (int)MathFloor(retracement_pct / InpLegacy_TrailStepPct);
+                
+                if(steps_should_be_closed > 0) {
+                    double initial_vol = GetInitialVolume(PositionGetInteger(POSITION_IDENTIFIER));
+                    if(initial_vol <= 0) continue;
+                    
+                    double current_vol = PositionGetDouble(POSITION_VOLUME);
+                    double expected_vol = initial_vol * (1.0 - (steps_should_be_closed * (InpLegacy_TrailClosePct / 100.0)));
+                    if(expected_vol < 0) expected_vol = 0;
+                    
+                    if(current_vol > expected_vol + 0.001) {
+                        double vol_to_close = current_vol - expected_vol;
+                        double lot_step = SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP);
+                        vol_to_close = MathFloor(vol_to_close / lot_step) * lot_step;
+                        
+                        double min_lot = SymbolInfoDouble(sym, SYMBOL_VOLUME_MIN);
+                        if(vol_to_close >= min_lot) {
+                            if(trade.PositionClosePartial(t, vol_to_close)) {
+                                Print("Legacy Trailing Scale-Out: Closed ", vol_to_close, " lots on ticket ", t, " due to ", retracement_pct, "% DD from peak.");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 void ManageEngineC(string sym, double bid) {
     if(!InpEnableLegacy) return;
+      CheckLegacyTrailingOut(sym);
     
     double leg_ma = GetMA(sym, InpLegacy_MA_TF, InpLegacy_MA_Period);
     if(leg_ma <= 0) return;
@@ -1582,6 +1659,7 @@ void DrawDashboard() {
     ObjectSetString(0, "DB_BG", OBJPROP_FONT, "Consolas");
     ObjectSetInteger(0, "DB_BG", OBJPROP_FONTSIZE, 10);
 }
+
 
 
 
