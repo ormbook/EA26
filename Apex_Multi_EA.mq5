@@ -75,10 +75,14 @@ input bool user_InpShowDash = true;     // Show Dashboard
 
 input group "=== ⚡ Risk & Auto Configuration ==="
 input ENUM_RISK_LEVEL user_InpRiskLevel = RISK_3_BALANCE; // System Risk Preset
-input double user_InpBaseLot_A = 0.01; // Base Lot: Engine A (Cashflow)
-input double user_InpBaseLot_B = 0.02; // Base Lot: Engine B (Trend/Pyramiding)
-input double user_InpBaseLot_C = 0.01; // Base Lot: Engine C (Legacy/Rescue)
-input double user_InpBaseLot_D = 0.02; // Base Lot: Engine D (Breakout/Killzone)
+input double user_InpAutoLot_Step_A = 1000; // Auto-Lot Step A ($/0.01 Lot) (0=Fixed)
+input double user_InpFixedLot_A     = 0.01; // Fixed Lot A (If Step = 0)
+input double user_InpAutoLot_Step_B = 500;  // Auto-Lot Step B ($/0.01 Lot)
+input double user_InpFixedLot_B     = 0.02; // Fixed Lot B
+input double user_InpAutoLot_Step_C = 2000; // Auto-Lot Step C ($/0.01 Lot)
+input double user_InpFixedLot_C     = 0.01; // Fixed Lot C
+input double user_InpAutoLot_Step_D = 500;  // Auto-Lot Step D ($/0.01 Lot)
+input double user_InpFixedLot_D     = 0.02; // Fixed Lot D
 
 input group "=== Engine A: Mean Reversion ==="
 input bool user_InpEnableEngineA = true;        // Enable Engine A
@@ -138,7 +142,8 @@ input int user_InpEngineD_KillzoneEnd = 22;        // Killzone End Hour (Broker 
 input group "=== Engine E: Ichimoku Macro Rider ==="
 input bool user_InpEnableEngineE = true; // Enable Engine E
 input ENUM_TIMEFRAMES user_InpEngineE_TF = PERIOD_H4; // Ichimoku Timeframe
-input double user_InpBaseLot_E = 0.05; // Base Lot: Engine E
+input double user_InpAutoLot_Step_E = 200;  // Auto-Lot Step E ($/0.01 Lot)
+input double user_InpFixedLot_E     = 0.05; // Fixed Lot E
 input int user_InpEngineE_MaxPos = 1; // Max Engine E positions
 
 input group "=== Risk ==="
@@ -148,10 +153,14 @@ input double user_InpSurvivalPct = 50.0;         // Survive X% crash (keep 50% e
 ulong InpMagic;
 bool InpShowDash;
 ENUM_RISK_LEVEL InpRiskLevel;
-double InpBaseLot_A;
-double InpBaseLot_B;
-double InpBaseLot_C;
-double InpBaseLot_D;
+double InpAutoLot_Step_A;
+double InpFixedLot_A;
+double InpAutoLot_Step_B;
+double InpFixedLot_B;
+double InpAutoLot_Step_C;
+double InpFixedLot_C;
+double InpAutoLot_Step_D;
+double InpFixedLot_D;
 bool InpEnableEngineA;
 ENUM_ENGINE_A_MODE InpEngineA_Mode;
 int InpMaxPositions;
@@ -198,7 +207,8 @@ double InpSurvivalPct;
 
 bool InpEnableEngineE;
 ENUM_TIMEFRAMES InpEngineE_TF;
-double InpBaseLot_E;
+double InpAutoLot_Step_E;
+double InpFixedLot_E;
 int InpEngineE_MaxPos;
 CIchimoku_Engine ichi;
 
@@ -208,10 +218,14 @@ void ApplyRiskLevelSettings() {
     InpMagic = user_InpMagic;
     InpShowDash = user_InpShowDash;
     InpRiskLevel = user_InpRiskLevel;
-    InpBaseLot_A = user_InpBaseLot_A;
-    InpBaseLot_B = user_InpBaseLot_B;
-    InpBaseLot_C = user_InpBaseLot_C;
-    InpBaseLot_D = user_InpBaseLot_D;
+    InpAutoLot_Step_A = user_InpAutoLot_Step_A;
+    InpFixedLot_A = user_InpFixedLot_A;
+    InpAutoLot_Step_B = user_InpAutoLot_Step_B;
+    InpFixedLot_B = user_InpFixedLot_B;
+    InpAutoLot_Step_C = user_InpAutoLot_Step_C;
+    InpFixedLot_C = user_InpFixedLot_C;
+    InpAutoLot_Step_D = user_InpAutoLot_Step_D;
+    InpFixedLot_D = user_InpFixedLot_D;
     InpEnableEngineA = user_InpEnableEngineA;
     InpEngineA_Mode = user_InpEngineA_Mode;
     InpMaxPositions = user_InpMaxPositions;
@@ -258,7 +272,8 @@ void ApplyRiskLevelSettings() {
 
     InpEnableEngineE = user_InpEnableEngineE;
     InpEngineE_TF = user_InpEngineE_TF;
-    InpBaseLot_E = user_InpBaseLot_E;
+    InpAutoLot_Step_E = user_InpAutoLot_Step_E;
+    InpFixedLot_E = user_InpFixedLot_E;
     InpEngineE_MaxPos = user_InpEngineE_MaxPos;
 
 
@@ -765,6 +780,22 @@ void UpdatePnL() {
     last_deal_ticket = highest_ticket;
 }
 
+
+double GetDynamicLot(double step, double fixedLot, string sym) {
+    if(step <= 0) return fixedLot;
+    double bal = AccountInfoDouble(ACCOUNT_BALANCE);
+    double lot = (bal / step) * 0.01;
+    
+    double min_lot = SymbolInfoDouble(sym, SYMBOL_VOLUME_MIN);
+    double max_lot = SymbolInfoDouble(sym, SYMBOL_VOLUME_MAX);
+    double lot_step = SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP);
+    
+    lot = MathFloor(lot / lot_step) * lot_step;
+    if(lot < min_lot) lot = min_lot;
+    if(lot > max_lot) lot = max_lot;
+    return lot;
+}
+
 void OnTimer()
 {
     UpdatePnL();
@@ -888,7 +919,7 @@ void OnTimer()
                     }
                     
                     if(can_pyramid) {
-                        double lot = InpBaseLot_B;
+                        double lot = GetDynamicLot(InpAutoLot_Step_B, InpFixedLot_B, sym);
                         if(InpEngineB_Mode == B_MODE_PYRAMIDING && nl > 1) {
                             lot = lot * (1.0 / nl); // Reduce lot size for higher layers (e.g. 1/2, 1/3)
                             double step = SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP);
@@ -919,7 +950,7 @@ void OnTimer()
                     }
                     
                     if(can_pyramid) {
-                        double lot = InpBaseLot_B;
+                        double lot = GetDynamicLot(InpAutoLot_Step_B, InpFixedLot_B, sym);
                         if(InpEngineB_Mode == B_MODE_PYRAMIDING && nl > 1) {
                             lot = lot * (1.0 / nl);
                             double step = SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP);
@@ -994,7 +1025,7 @@ void OnTimer()
                 if(can_open) {
                     int nl = GetNextLayerLegacySlot(sym, s);
                     if(nl > 0) {
-                        double lot = InpBaseLot_C;
+                        double lot = GetDynamicLot(InpAutoLot_Step_C, InpFixedLot_C, sym);
                         if(c_count > 0 && InpLegacy_LotMult > 1.0) {
                             double last_lot = GetLowestLegacySlotLot(sym, s);
                             if(last_lot > 0) {
@@ -1052,7 +1083,7 @@ void OnTimer()
                             if(can_snowball) {
                                 int nl = GetNextLayerD(sym);
                                 if(nl > 0) {
-                                    double lot = InpBaseLot_D;
+                                    double lot = GetDynamicLot(InpAutoLot_Step_D, InpFixedLot_D, sym);
                                     if(bos_status == 2 && lot > 0) { // Strong Breakout (No Divergence) -> Multiply Lot!
                                         double step = SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP);
                                         lot = MathFloor((lot * InpEngineD_LotMult) / step) * step;
@@ -1435,6 +1466,8 @@ void DrawDashboard() {
     ObjectSetString(0, "DB_BG", OBJPROP_FONT, "Consolas");
     ObjectSetInteger(0, "DB_BG", OBJPROP_FONTSIZE, 10);
 }
+
+
 
 
 
