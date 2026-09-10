@@ -75,6 +75,7 @@ input bool user_InpShowDash = true;     // Show Dashboard
 
 input group "=== ⚡ Risk & Auto Configuration ==="
 input ENUM_RISK_LEVEL user_InpRiskLevel = RISK_3_BALANCE; // System Risk Preset
+input double user_InpMaxTradeDrawdown = 10.0; // Max % Loss per Trade (0 = Off) // System Risk Preset
 input double user_InpAutoLot_Step_A = 1000; // Auto-Lot Step A ($/0.01 Lot) (0=Fixed)
 input double user_InpFixedLot_A     = 0.01; // Fixed Lot A (If Step = 0)
 input double user_InpAutoLot_Step_B = 500;  // Auto-Lot Step B ($/0.01 Lot)
@@ -207,6 +208,13 @@ double InpSurvivalPct;
 
 bool InpEnableEngineE;
 ENUM_TIMEFRAMES InpEngineE_TF;
+double InpMaxTradeDrawdown;
+double banned_fvg_poc_A[20];
+double banned_fvg_poc_B[20];
+datetime banned_legacy_D1[20];
+datetime banned_bos_D[20];
+int banned_ichi_sig[20];
+
 double InpAutoLot_Step_E;
 double InpFixedLot_E;
 int InpEngineE_MaxPos;
@@ -272,6 +280,7 @@ void ApplyRiskLevelSettings() {
 
     InpEnableEngineE = user_InpEnableEngineE;
     InpEngineE_TF = user_InpEngineE_TF;
+    InpMaxTradeDrawdown = user_InpMaxTradeDrawdown;
     InpAutoLot_Step_E = user_InpAutoLot_Step_E;
     InpFixedLot_E = user_InpFixedLot_E;
     InpEngineE_MaxPos = user_InpEngineE_MaxPos;
@@ -348,6 +357,11 @@ int OnInit()
         last_bar_time[i] = 0;
         last_d_bar_time[i] = 0;
         prev_m15_struct[i] = 0;
+        banned_fvg_poc_A[i] = 0;
+        banned_fvg_poc_B[i] = 0;
+        banned_legacy_D1[i] = 0;
+        banned_bos_D[i] = 0;
+        banned_ichi_sig[i] = 0;
     }
     EventSetTimer(1);
     if(!ichi.Init(symbols[0], InpEngineE_TF)) Print("Ichimoku Init Failed");
@@ -808,6 +822,41 @@ void OnTimer()
         string sym = symbols[i];
         ENUM_MACRO_THEME macroTheme = GetMacroTheme(sym);
 
+        
+        //=== INDIVIDUAL TRADE SL (SIGNAL RESET) ===
+        if(InpMaxTradeDrawdown > 0) {
+            double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+            for(int j=PositionsTotal()-1; j>=0; j--) {
+                ulong t = PositionGetTicket(j);
+                ulong m = PositionGetInteger(POSITION_MAGIC);
+                if(PositionGetString(POSITION_SYMBOL)==sym && IsOurMagic(m)) {
+                    double profit = PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
+                    double loss_pct = (profit / balance) * 100.0;
+                    if(loss_pct <= -InpMaxTradeDrawdown) {
+                        Print("TRADE SL REACHED: ", loss_pct, "% for magic ", m, " Cut & Ban Signal!");
+                        trade.PositionClose(t);
+                        if(IsMagicA(m)) {
+                            SMC_Zone bf[]; int bc = smc.GetActiveFVGs(sym, InpEntryTF, true, bf, 3);
+                            if(bc > 0) banned_fvg_poc_A[i] = bf[0].poc;
+                            SMC_Zone sf[]; int sc = smc.GetActiveFVGs(sym, InpEntryTF, false, sf, 3);
+                            if(sc > 0) banned_fvg_poc_A[i] = sf[0].poc;
+                        } else if(IsMagicB(m) || IsMagicBPlus(m)) {
+                            SMC_Zone bf[]; int bc = smc.GetActiveFVGs(sym, InpEntryTF, true, bf, 3);
+                            if(bc > 0) banned_fvg_poc_B[i] = bf[0].poc;
+                            SMC_Zone sf[]; int sc = smc.GetActiveFVGs(sym, InpEntryTF, false, sf, 3);
+                            if(sc > 0) banned_fvg_poc_B[i] = sf[0].poc;
+                        } else if(IsMagicC(m)) {
+                            banned_legacy_D1[i] = iTime(sym, PERIOD_D1, 0);
+                        } else if(IsMagicD(m)) {
+                            banned_bos_D[i] = iTime(sym, InpEngineD_TF, 0);
+                        } else if(IsMagicE(m)) {
+                            banned_ichi_sig[i] = ichi.GetSignal(sym, InpEngineE_TF);
+                        }
+                    }
+                }
+            }
+        }
+
         //=== GLOBAL EQUITY PROTECTOR (ANTI-PORT แตก) ===
         double equity = AccountInfoDouble(ACCOUNT_EQUITY);
         double balance = AccountInfoDouble(ACCOUNT_BALANCE);
@@ -891,7 +940,7 @@ void OnTimer()
                 if(lot > 0) {
                     if(zone == 1 && macroTheme != MACRO_BEARISH) {
                         SMC_Zone bf[]; int bc = smc.GetActiveFVGs(sym, InpEntryTF, true, bf, 3);
-                        if(bc > 0 && !IsTooClose(sym, bf[0].poc, 0, InpMaxPositions, InpA_MinDist_ATR)) {
+                        if(bc > 0 && bf[0].poc != banned_fvg_poc_A[i] && !IsTooClose(sym, bf[0].poc, 0, InpMaxPositions, InpA_MinDist_ATR)) {
                             double lowest_buy = GetLowestABuy(sym);
                             if(lowest_buy == -1 || bf[0].poc < lowest_buy) {
                                 trade.SetExpertMagicNumber(InpMagic+nl); 
@@ -910,7 +959,7 @@ void OnTimer()
                         
                         if(is_valid_time) {
                             SMC_Zone sf[]; int sc = smc.GetActiveFVGs(sym, InpEntryTF, false, sf, 3);
-                            if(sc > 0 && !IsTooClose(sym, sf[0].poc, 0, InpMaxPositions, InpA_MinDist_ATR)) {
+                            if(sc > 0 && sf[0].poc != banned_fvg_poc_A[i] && !IsTooClose(sym, sf[0].poc, 0, InpMaxPositions, InpA_MinDist_ATR)) {
                                 double highest_sell = GetHighestASell(sym);
                                 if(highest_sell == -1 || sf[0].poc > highest_sell) {
                                     trade.SetExpertMagicNumber(InpMagic+nl); 
@@ -944,7 +993,7 @@ void OnTimer()
                         
                         if(lot > 0) {
                             SMC_Zone bf[]; int bc = smc.GetActiveFVGs(sym, InpEntryTF, true, bf, 3);
-                            if(bc > 0 && !IsTooClose(sym, bf[0].poc, MAGIC_TREND, InpTrend_MaxPos, InpTrend_MinDist_ATR)) {
+                            if(bc > 0 && bf[0].poc != banned_fvg_poc_B[i] && !IsTooClose(sym, bf[0].poc, MAGIC_TREND, InpTrend_MaxPos, InpTrend_MinDist_ATR)) {
                                 trade.SetExpertMagicNumber(InpMagic + MAGIC_TREND + nl);
                                 trade.BuyLimit(lot, bf[0].poc, sym, 0, 0, ORDER_TIME_GTC, 0, "B_TrendRun");
                             }
@@ -975,7 +1024,7 @@ void OnTimer()
                         
                         if(lot > 0) {
                             SMC_Zone bf[]; int bc = smc.GetActiveFVGs(sym, InpEntryTF, true, bf, 3);
-                            if(bc > 0 && !IsTooClose(sym, bf[0].poc, MAGIC_TREND_PLUS, InpTrendPlus_MaxPos, InpTrend_MinDist_ATR)) {
+                            if(bc > 0 && bf[0].poc != banned_fvg_poc_B[i] && !IsTooClose(sym, bf[0].poc, MAGIC_TREND_PLUS, InpTrendPlus_MaxPos, InpTrend_MinDist_ATR)) {
                                 trade.SetExpertMagicNumber(InpMagic + MAGIC_TREND_PLUS + nl);
                                 trade.BuyLimit(lot, bf[0].poc, sym, 0, 0, ORDER_TIME_GTC, 0, "B+_TrendDip");
                             }
@@ -986,7 +1035,7 @@ void OnTimer()
         }
         
         //=== ENGINE C: Legacy Slots (BUY ONLY) ===
-        if(InpEnableLegacy && macroTheme != MACRO_BEARISH) {
+        if(InpEnableLegacy && macroTheme != MACRO_BEARISH && iTime(sym, PERIOD_D1, 0) != banned_legacy_D1[i]) {
             double leg_ma = GetMA(sym, InpLegacy_MA_TF, InpLegacy_MA_Period);
             if(leg_ma > 0 && bid < leg_ma) {
                 // Find the currently active Legacy Slot (only one slot has risk at a time)
@@ -1444,6 +1493,41 @@ void DrawDashboard() {
         string sym = symbols[i];
         ENUM_MACRO_THEME macroTheme = GetMacroTheme(sym);
 
+        
+        //=== INDIVIDUAL TRADE SL (SIGNAL RESET) ===
+        if(InpMaxTradeDrawdown > 0) {
+            double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+            for(int j=PositionsTotal()-1; j>=0; j--) {
+                ulong t = PositionGetTicket(j);
+                ulong m = PositionGetInteger(POSITION_MAGIC);
+                if(PositionGetString(POSITION_SYMBOL)==sym && IsOurMagic(m)) {
+                    double profit = PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
+                    double loss_pct = (profit / balance) * 100.0;
+                    if(loss_pct <= -InpMaxTradeDrawdown) {
+                        Print("TRADE SL REACHED: ", loss_pct, "% for magic ", m, " Cut & Ban Signal!");
+                        trade.PositionClose(t);
+                        if(IsMagicA(m)) {
+                            SMC_Zone bf[]; int bc = smc.GetActiveFVGs(sym, InpEntryTF, true, bf, 3);
+                            if(bc > 0) banned_fvg_poc_A[i] = bf[0].poc;
+                            SMC_Zone sf[]; int sc = smc.GetActiveFVGs(sym, InpEntryTF, false, sf, 3);
+                            if(sc > 0) banned_fvg_poc_A[i] = sf[0].poc;
+                        } else if(IsMagicB(m) || IsMagicBPlus(m)) {
+                            SMC_Zone bf[]; int bc = smc.GetActiveFVGs(sym, InpEntryTF, true, bf, 3);
+                            if(bc > 0) banned_fvg_poc_B[i] = bf[0].poc;
+                            SMC_Zone sf[]; int sc = smc.GetActiveFVGs(sym, InpEntryTF, false, sf, 3);
+                            if(sc > 0) banned_fvg_poc_B[i] = sf[0].poc;
+                        } else if(IsMagicC(m)) {
+                            banned_legacy_D1[i] = iTime(sym, PERIOD_D1, 0);
+                        } else if(IsMagicD(m)) {
+                            banned_bos_D[i] = iTime(sym, InpEngineD_TF, 0);
+                        } else if(IsMagicE(m)) {
+                            banned_ichi_sig[i] = ichi.GetSignal(sym, InpEngineE_TF);
+                        }
+                    }
+                }
+            }
+        }
+
         //=== GLOBAL EQUITY PROTECTOR (ANTI-PORT แตก) ===
         double equity = AccountInfoDouble(ACCOUNT_EQUITY);
         double balance = AccountInfoDouble(ACCOUNT_BALANCE);
@@ -1498,6 +1582,7 @@ void DrawDashboard() {
     ObjectSetString(0, "DB_BG", OBJPROP_FONT, "Consolas");
     ObjectSetInteger(0, "DB_BG", OBJPROP_FONTSIZE, 10);
 }
+
 
 
 
