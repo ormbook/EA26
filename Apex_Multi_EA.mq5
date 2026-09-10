@@ -807,6 +807,22 @@ void OnTimer()
     for(int i=0; i<sym_count; i++) {
         string sym = symbols[i];
         ENUM_MACRO_THEME macroTheme = GetMacroTheme(sym);
+
+        //=== GLOBAL EQUITY PROTECTOR (ANTI-PORT แตก) ===
+        double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+        double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+        double max_allowed_dd = InpSurvivalPct / 100.0;
+        if(balance > 0 && (balance - equity) / balance > max_allowed_dd) {
+            Print("EMERGENCY: Max Drawdown Reached! Closing all positions for ", sym);
+            for(int j=PositionsTotal()-1; j>=0; j--) {
+                ulong m = PositionGetInteger(POSITION_MAGIC);
+                if(PositionGetString(POSITION_SYMBOL)==sym && IsOurMagic(m)) {
+                    trade.PositionClose(PositionGetTicket(j));
+                }
+            }
+            continue; // Skip opening new trades for this symbol
+        }
+
         if(!SymbolInfoInteger(sym, SYMBOL_SELECT)) continue;
         
         double ma = GetMA(sym, InpMA_TF, InpMA_Period);
@@ -873,7 +889,7 @@ void OnTimer()
             if(nl > 0) {
                 double lot = GetSafeLot(sym, (zone==1));
                 if(lot > 0) {
-                    if(zone == 1) {
+                    if(zone == 1 && macroTheme != MACRO_BEARISH) {
                         SMC_Zone bf[]; int bc = smc.GetActiveFVGs(sym, InpEntryTF, true, bf, 3);
                         if(bc > 0 && !IsTooClose(sym, bf[0].poc, 0, InpMaxPositions, InpA_MinDist_ATR)) {
                             double lowest_buy = GetLowestABuy(sym);
@@ -1427,6 +1443,22 @@ void DrawDashboard() {
     for(int i=0; i<sym_count; i++) {
         string sym = symbols[i];
         ENUM_MACRO_THEME macroTheme = GetMacroTheme(sym);
+
+        //=== GLOBAL EQUITY PROTECTOR (ANTI-PORT แตก) ===
+        double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+        double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+        double max_allowed_dd = InpSurvivalPct / 100.0;
+        if(balance > 0 && (balance - equity) / balance > max_allowed_dd) {
+            Print("EMERGENCY: Max Drawdown Reached! Closing all positions for ", sym);
+            for(int j=PositionsTotal()-1; j>=0; j--) {
+                ulong m = PositionGetInteger(POSITION_MAGIC);
+                if(PositionGetString(POSITION_SYMBOL)==sym && IsOurMagic(m)) {
+                    trade.PositionClose(PositionGetTicket(j));
+                }
+            }
+            continue; // Skip opening new trades for this symbol
+        }
+
         if(!SymbolInfoInteger(sym, SYMBOL_SELECT)) continue;
         double ma = GetMA(sym, InpMA_TF, InpMA_Period);
         double leg_ma = GetMA(sym, InpLegacy_MA_TF, InpLegacy_MA_Period);
@@ -1466,6 +1498,8 @@ void DrawDashboard() {
     ObjectSetString(0, "DB_BG", OBJPROP_FONT, "Consolas");
     ObjectSetInteger(0, "DB_BG", OBJPROP_FONTSIZE, 10);
 }
+
+
 
 
 
