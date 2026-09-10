@@ -1416,6 +1416,9 @@ void CheckLegacyTrailingOut(string sym) {
             long type = PositionGetInteger(POSITION_TYPE);
             if(type != POSITION_TYPE_BUY) continue; 
             
+            double current_sl = PositionGetDouble(POSITION_SL);
+            if(current_sl == 0.0) continue; // Trailing out only allowed if SL is already set (e.g. BE Guard)
+            
             double open_price = PositionGetDouble(POSITION_PRICE_OPEN);
             double current_price = PositionGetDouble(POSITION_PRICE_CURRENT);
             datetime open_time = (datetime)PositionGetInteger(POSITION_TIME);
@@ -1659,6 +1662,7 @@ void DrawDashboard() {
     ObjectSetString(0, "DB_BG", OBJPROP_FONT, "Consolas");
     ObjectSetInteger(0, "DB_BG", OBJPROP_FONTSIZE, 10);
 }
+
 
 
 
