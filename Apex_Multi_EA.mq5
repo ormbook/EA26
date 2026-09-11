@@ -927,6 +927,7 @@ void OnTimer()
         CleanUpPendingOrders(sym);
         
         //=== ENGINE A: Mean Reversion ===
+        if(InpEnableEngineA) {
         int zone = (bid < ma) ? 1 : -1;
         
         bool fresh_signal = false;
@@ -984,6 +985,7 @@ void OnTimer()
             }
         }
         
+        } // end Engine A
         //=== ENGINE B: Trend Runner (Price > MA) ===
         if(InpEnableTrend && CountEngineB(sym) < InpTrend_MaxPos) {
             int d1_struct = smc.GetMarketStructure(sym, InpTrend_D1);
@@ -1662,6 +1664,8 @@ void DrawDashboard() {
     ObjectSetString(0, "DB_BG", OBJPROP_FONT, "Consolas");
     ObjectSetInteger(0, "DB_BG", OBJPROP_FONTSIZE, 10);
 }
+
+
 
 
 
